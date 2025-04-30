@@ -33,12 +33,23 @@ app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('MongoDB connection successful'))
-  .catch(err => console.error('MongoDB connection error:', err));
+  .catch(err => console.error('MongoDB connection error:', err))
+  .finally(() => {
+    // 无论MongoDB连接成功或失败，都启动服务器
+    app.listen(PORT, () => {
+      console.log(`Server running on port: ${PORT}`);
+      console.log(`Test the API at http://localhost:${PORT}`);
+    });
+  });
 
 // Basic route test
 app.get('/', (req, res) => {
-  res.status(200).json({ message: 'CanAm Backend API Service Running' });
-});
+    res.status(200).json({ message: 'CanAm Backend API Service Running' });
+  });
+  
+  app.get('/health', (req, res) => {
+    res.status(200).send('OK');
+  });
 
 // Use routes
 app.use('/api/courts', courtsRoutes);
@@ -65,5 +76,6 @@ app.use((err, req, res, next) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on port: ${PORT}`);
-  console.log(`Test the API at http://localhost:${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`MongoDB status: ${mongoose.connection.readyState ? 'Connected' : 'Disconnected'}`);
 });
