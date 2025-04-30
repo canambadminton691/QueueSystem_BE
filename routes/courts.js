@@ -40,8 +40,8 @@ router.get('/', async (req, res) => {
         const startTime = new Date(court.currentReservation.startTime);
         const timeDifferenceMinutes = (currentTime - startTime) / (1000 * 60);
         
-        // If 60 minutes have passed, update the database
-        if (timeDifferenceMinutes >= 60) {
+        // If 30 minutes have passed, update the database
+        if (timeDifferenceMinutes >= 30) {
           // Update the court in database
           await Court.findByIdAndUpdate(court._id, {
             isAvailable: true,

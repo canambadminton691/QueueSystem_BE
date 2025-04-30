@@ -19,7 +19,7 @@ router.get('/', async (req, res) => {
         const startTime = new Date(court.currentReservation.startTime);
         const timeDifferenceMinutes = (currentTime - startTime) / (1000 * 60);
         
-        if (timeDifferenceMinutes < 60) {
+        if (timeDifferenceMinutes < 30) {
           // Only add users from active games
           court.currentReservation.userIds.forEach(userId => {
             activeUsers.push({

@@ -19,7 +19,7 @@ router.get('/', async (req, res) => {
         const currentTime = new Date();
         const timeDifferenceMinutes = (currentTime - startTime) / (1000 * 60);
         
-        if (timeDifferenceMinutes >= 60) {
+        if (timeDifferenceMinutes >= 30) {
           // Store the reservation ID before deleting
           const reservationId = court.currentReservation._id;
           

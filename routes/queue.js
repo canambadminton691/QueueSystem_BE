@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
       .filter(court => court.currentReservation)
       .map(court => {
         const endTime = new Date(court.currentReservation.startTime);
-        endTime.setMinutes(endTime.getMinutes() + 60); // Add 60 minutes to start time
+        endTime.setMinutes(endTime.getMinutes() + 30); // Add 30 minutes to start time
         const timeRemaining = endTime.getTime() - now.getTime();
         const courtNumber = parseInt(court.name.replace('Court ', ''));
         

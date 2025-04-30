@@ -28,7 +28,7 @@ const ReservationSchema = new mongoose.Schema({
     type: Date,
     default: function() {
       const start = this.startTime || new Date();
-      return new Date(start.getTime() + 60 * 60 * 1000);
+      return new Date(start.getTime() + 30 * 60 * 1000);
     }
   }
 });
