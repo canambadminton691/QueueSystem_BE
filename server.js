@@ -32,10 +32,12 @@ app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('MongoDB connection successful'))
+  .then(() => {
+    console.log('MongoDB connection successful');
+  })
   .catch(err => console.error('MongoDB connection error:', err))
   .finally(() => {
-    // 无论MongoDB连接成功或失败，都启动服务器
+    // No matter connect MongoDB success or fail，start the server
     app.listen(PORT, () => {
       console.log(`Server running on port: ${PORT}`);
       console.log(`Test the API at http://localhost:${PORT}`);
