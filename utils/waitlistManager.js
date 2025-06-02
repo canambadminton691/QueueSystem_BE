@@ -10,69 +10,117 @@ const Reservation = require('../models/Reservation');
 class WaitlistManager {
   
   /**
-   * Check if court is available for immediate use (not in waitlist)
+   * Get current court status using unified queue logic
+   * @param {Object} court - Court document
+   * @returns {Object} - Court status information
+   */
+  static getCourtStatus(court) {
+    const now = new Date();
+    
+    if (!court.waitlist || court.waitlist.length === 0) {
+      return {
+        isAvailable: true,
+        activeReservation: null,
+        nextEntry: null,
+        queueLength: 0
+      };
+    }
+
+    // Sort waitlist to ensure proper order
+    const sortedQueue = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
+    const head = sortedQueue[0];
+    const headEndTime = new Date(new Date(head.startTime).getTime() + 30 * 60000); // 30 min duration
+
+    return {
+      isAvailable: now >= headEndTime, // Head expired = court available
+      activeReservation: now < headEndTime ? head : null, // Head active if not expired
+      nextEntry: sortedQueue.length > 1 ? sortedQueue[1] : null,
+      queueLength: sortedQueue.length,
+      headExpired: now >= headEndTime
+    };
+  }
+
+  /**
+   * Process queue head removal when expired (unified progression)
+   * @param {Object} court - Court document
+   * @returns {Object} - Processing result
+   */
+  static async processQueueProgression(court) {
+    const status = this.getCourtStatus(court);
+    let processed = false;
+    let activatedEntry = null;
+
+    // If head is expired, remove it and activate next
+    if (status.headExpired && court.waitlist.length > 0) {
+      const expiredEntry = court.waitlist[0];
+      
+      // Remove expired reservation if it exists
+      if (expiredEntry.reservationId) {
+        await Reservation.findByIdAndDelete(expiredEntry.reservationId);
+      }
+      
+      // Remove head from queue
+      court.waitlist.splice(0, 1);
+      
+      // Reorder remaining entries
+      await this.reorderWaitlistIndices(court);
+      
+      processed = true;
+      activatedEntry = court.waitlist.length > 0 ? court.waitlist[0] : null;
+      
+      // Update court availability
+      court.isAvailable = court.waitlist.length === 0;
+    }
+
+    return {
+      processed,
+      expiredEntry: processed ? court.waitlist[0] || null : null,
+      activatedEntry,
+      queueLength: court.waitlist.length
+    };
+  }
+
+  /**
+   * Check if court is available for immediate use (unified logic)
    * @param {String} courtId - MongoDB ObjectId of the court
    * @returns {Object} - Availability status and suggestion
    */
   static async checkCourtAvailability(courtId) {
     try {
-      const court = await Court.findById(courtId).populate('currentReservation');
+      const court = await Court.findById(courtId);
       if (!court) {
         throw new Error('Court not found');
       }
 
-      const now = new Date();
-      
-      // Check if court has active reservation
-      if (court.currentReservation) {
-        const startTime = new Date(court.currentReservation.startTime);
-        const timeDifferenceMinutes = (now - startTime) / (1000 * 60);
-        
-        // If reservation expired, court is available
-        if (timeDifferenceMinutes >= 30) {
-          return {
-            isAvailable: true,
-            suggestion: 'Court is available for immediate use',
-            shouldJoinWaitlist: false
-          };
-        } else {
-          return {
-            isAvailable: false,
-            suggestion: 'Court is in use, join waitlist',
-            shouldJoinWaitlist: true,
-            reservationEndsAt: new Date(startTime.getTime() + 30 * 60000)
-          };
-        }
-      }
+      // Process any expired entries first
+      await this.processQueueProgression(court);
+      await court.save();
 
-      // Court has no reservation, check waitlist
-      if (court.waitlist.length === 0) {
+      const status = this.getCourtStatus(court);
+
+      if (status.isAvailable) {
         return {
           isAvailable: true,
           suggestion: 'Court is available for immediate use',
-          shouldJoinWaitlist: false
+          shouldJoinWaitlist: false,
+          queueLength: status.queueLength
         };
-      }
-
-      // Court has waitlist, check if first entry time has passed
-      const sortedWaitlist = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
-      const firstEntry = sortedWaitlist[0];
-      
-      if (now >= new Date(firstEntry.startTime)) {
+      } else {
+        const activeReservation = status.activeReservation;
+        const endTime = new Date(new Date(activeReservation.startTime).getTime() + 30 * 60000);
+        
         return {
           isAvailable: false,
-          suggestion: 'Court should be processed for next waitlist entry',
+          suggestion: 'Court is in use, join waitlist',
           shouldJoinWaitlist: true,
-          nextAvailable: firstEntry.startTime
+          activeReservation: {
+            users: activeReservation.usernames,
+            endTime: endTime
+          },
+          nextAvailable: status.nextEntry ? status.nextEntry.startTime : endTime,
+          queueLength: status.queueLength
         };
       }
-
-      return {
-        isAvailable: false,
-        suggestion: 'Court is reserved, join waitlist',
-        shouldJoinWaitlist: true,
-        nextAvailable: firstEntry.startTime
-      };
 
     } catch (error) {
       return {
@@ -83,33 +131,25 @@ class WaitlistManager {
   }
 
   /**
-   * Calculate smart start time for waitlist entry
+   * Calculate smart start time for waitlist entry (unified logic)
    * @param {Object} court - Court document
    * @returns {Date} - Calculated start time
    */
   static calculateStartTime(court) {
     const now = new Date();
+    const status = this.getCourtStatus(court);
     
-    // If court has active reservation, start after reservation ends + 40 minutes
-    if (court.currentReservation) {
-      const reservationStart = new Date(court.currentReservation.startTime);
-      const reservationEnd = new Date(reservationStart.getTime() + 30 * 60000); // 30 min reservation
-      
-      if (court.waitlist.length === 0) {
-        // First waitlist entry: reservation end time + 40 minutes
-        return new Date(reservationEnd.getTime() + 40 * 60000);
-      }
+    if (status.queueLength === 0) {
+      // Empty queue - immediate activation (start now)
+      return now;
     }
     
-    // If there are existing waitlist entries, use last entry's time + 40 minutes
-    if (court.waitlist.length > 0) {
-      const sortedWaitlist = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
-      const lastEntry = sortedWaitlist[sortedWaitlist.length - 1];
-      return new Date(new Date(lastEntry.startTime).getTime() + 40 * 60000);
-    }
+    // Calculate based on last entry in queue + 40 minutes
+    const sortedQueue = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
+    const lastEntry = sortedQueue[sortedQueue.length - 1];
     
-    // No reservation and no waitlist - immediate availability
-    return now;
+    // Next entry starts 40 minutes after last entry's start time
+    return new Date(new Date(lastEntry.startTime).getTime() + 40 * 60000);
   }
 
   /**
@@ -183,77 +223,25 @@ class WaitlistManager {
   }
 
   /**
-   * Process automatic waitlist progression for all courts
+   * Process automatic waitlist progression for all courts (unified logic)
    * @returns {Object} - Processing results
    */
   static async processWaitlistProgression() {
     try {
-      const courts = await Court.find({}).populate('currentReservation');
-      const now = new Date();
+      const courts = await Court.find({});
       const processed = [];
       
       for (const court of courts) {
-        // Skip if court has active reservation
-        if (court.currentReservation) {
-          const startTime = new Date(court.currentReservation.startTime);
-          const timeDifferenceMinutes = (now - startTime) / (1000 * 60);
-          
-          if (timeDifferenceMinutes < 30) {
-            continue; // Still in use
-          } else {
-            // Reservation expired, clean it up
-            await Reservation.findByIdAndDelete(court.currentReservation._id);
-            court.currentReservation = null;
-            court.isAvailable = true;
-          }
-        }
+        const progressionResult = await this.processQueueProgression(court);
         
-        // Check if first waitlist entry should become active
-        if (court.waitlist.length > 0) {
-          const sortedWaitlist = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
-          const firstEntry = sortedWaitlist[0];
-          
-          if (now >= new Date(firstEntry.startTime)) {
-            // Update the existing reservation to be active instead of creating new one
-            if (firstEntry.reservationId) {
-              const existingReservation = await Reservation.findById(firstEntry.reservationId);
-              if (existingReservation) {
-                // Update the reservation start time to now (since it's ready)
-                existingReservation.startTime = now;
-                await existingReservation.save();
-                
-                // Update court
-                court.currentReservation = existingReservation._id;
-                court.isAvailable = false;
-              }
-            } else {
-              // Fallback: create new reservation if no linked reservation exists
-              const reservation = new Reservation({
-                userIds: firstEntry.usernames,
-                type: firstEntry.usernames.length === 1 ? 'half' : 'full',
-                startTime: now,
-                courtId: court._id
-              });
-              
-              await reservation.save();
-              
-              // Update court
-              court.currentReservation = reservation._id;
-              court.isAvailable = false;
-            }
-            
-            // Remove first entry from waitlist and reorder
-            court.waitlist.splice(0, 1);
-            await this.reorderWaitlistIndices(court);
-            
-            processed.push({
-              courtId: court._id,
-              courtName: court.name,
-              activatedUsers: firstEntry.usernames,
-              remainingWaitlist: court.waitlist.length,
-              reservationId: firstEntry.reservationId || 'created_new'
-            });
-          }
+        if (progressionResult.processed) {
+          processed.push({
+            courtId: court._id,
+            courtName: court.name,
+            expiredUsers: progressionResult.expiredEntry ? progressionResult.expiredEntry.usernames : [],
+            activatedUsers: progressionResult.activatedEntry ? progressionResult.activatedEntry.usernames : [],
+            remainingQueueLength: progressionResult.queueLength
+          });
         }
         
         await court.save();
@@ -294,44 +282,48 @@ class WaitlistManager {
       // Check for duplicate waitlists
       const duplicateCheck = await this.checkForDuplicateWaitlists(usernames, null); // Check all courts
       if (duplicateCheck.hasConflicts) {
-        const individualUserConflicts = duplicateCheck.conflicts.filter(c => 
-          c.type === 'individual_user' && c.courtId.toString() !== courtId.toString()
-        );
-        const sameGroupConflicts = duplicateCheck.conflicts.filter(c => 
-          c.type === 'same_group'
-        );
+        const individualUserConflicts = duplicateCheck.conflicts.filter(c => c.type === 'individual_user');
+        const sameGroupConflicts = duplicateCheck.conflicts.filter(c => c.type === 'same_group');
         
         let errorMessage = '';
         if (sameGroupConflicts.length > 0) {
           errorMessage = `Same user group already in waitlist at ${sameGroupConflicts[0].courtName} (position ${sameGroupConflicts[0].waitlistIndex})`;
         } else if (individualUserConflicts.length > 0) {
-          errorMessage = `Users already in waitlist: ${individualUserConflicts.map(c => `${c.username} at ${c.courtName}`).join(', ')}`;
+          // Check if it's the same court - provide different message
+          const sameCourt = individualUserConflicts.some(c => c.courtId.toString() === courtId.toString());
+          if (sameCourt) {
+            const conflictUsers = individualUserConflicts
+              .filter(c => c.courtId.toString() === courtId.toString())
+              .map(c => c.username);
+            errorMessage = `Users already in this court's waitlist: ${conflictUsers.join(', ')}`;
+          } else {
+            errorMessage = `Users already in waitlist: ${individualUserConflicts.map(c => `${c.username} at ${c.courtName}`).join(', ')}`;
+          }
         }
         
         throw new Error(errorMessage);
       }
 
       // Find court
-      const court = await Court.findById(courtId).populate('currentReservation');
+      const court = await Court.findById(courtId);
       if (!court) {
         throw new Error('Court not found');
       }
 
-      // Check if court is available for immediate use
+      // Check availability using unified logic (this handles progression internally)
       const availability = await this.checkCourtAvailability(courtId);
-      if (availability.isAvailable && !availability.shouldJoinWaitlist) {
-        return {
-          success: false,
-          error: 'Court is available for immediate use. Please make a reservation instead of joining waitlist.',
-          suggestion: 'Use the reservation API to book this court now'
-        };
-      }
+      
+      // In unified system, we allow joining even empty courts (they become head immediately)
+      // No need to reject empty courts since joining empty queue = immediate activation
+
+      // Reload court after availability check (which may have processed progression)
+      const updatedCourt = await Court.findById(courtId);
 
       // Calculate smart start time
-      const startTime = this.calculateStartTime(court);
+      const startTime = this.calculateStartTime(updatedCourt);
 
       // Generate next waitlist index
-      const nextIndex = this.getNextWaitlistIndex(court.waitlist);
+      const nextIndex = this.getNextWaitlistIndex(updatedCourt.waitlist);
 
       // Create reservation in Reservations schema for the future booking
       const reservation = new Reservation({
@@ -353,8 +345,12 @@ class WaitlistManager {
       };
 
       // Add to court's waitlist array
-      court.waitlist.push(waitlistEntry);
-      await court.save();
+      updatedCourt.waitlist.push(waitlistEntry);
+      
+      // Mark court as unavailable since we now have an active head
+      updatedCourt.isAvailable = false;
+      
+      await updatedCourt.save();
 
       return {
         success: true,
@@ -462,7 +458,7 @@ class WaitlistManager {
   }
 
   /**
-   * Recalculate start times for all waitlist entries
+   * Recalculate start times for all waitlist entries (unified logic)
    * @param {Object} court - Court document with waitlist
    * @returns {void}
    */
@@ -473,20 +469,9 @@ class WaitlistManager {
     court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
     
     // Calculate start time for first entry
-    let baseTime;
-    if (court.currentReservation) {
-      const reservationStart = new Date(court.currentReservation.startTime);
-      if (isNaN(reservationStart.getTime())) {
-        // If reservation start time is invalid, use current time
-        baseTime = new Date();
-      } else {
-        baseTime = new Date(reservationStart.getTime() + 30 * 60000 + 40 * 60000); // reservation end + 40min
-      }
-    } else {
-      baseTime = new Date(); // Now
-    }
+    let baseTime = new Date(); // Start from now for first entry
     
-    // Update start times
+    // Update start times with 40-minute intervals
     court.waitlist.forEach((entry, index) => {
       if (index === 0) {
         entry.startTime = baseTime;
