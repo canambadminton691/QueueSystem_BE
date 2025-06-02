@@ -3,8 +3,23 @@ const express = require('express');
 const router = express.Router();
 const User = require('../../models/User');
 const Court = require('../../models/Court');
+const WaitlistManager = require('../../utils/waitlistManager');
 
-router.get('/', async (req, res) => {
+// Admin password validation middleware
+const validateAdmin = (req, res, next) => {
+  const adminPassword = req.headers['x-admin-password'];
+  
+  if (adminPassword !== 'canamadmin') {
+    return res.status(401).json({ 
+      success: false,
+      error: 'Invalid admin password' 
+    });
+  }
+  
+  next();
+};
+
+router.get('/', validateAdmin, async (req, res) => {
   try {
     // Get current date in PST
     const now = new Date();
@@ -12,36 +27,34 @@ router.get('/', async (req, res) => {
     const startOfDay = new Date(pstDate);
     startOfDay.setHours(0, 0, 0, 0);
 
-    // Get all active courts with their reservations
-    const activeCourts = await Court.find({ isAvailable: false })
-      .populate('currentReservation');
+    // Get all courts with waitlists (unified system)
+    const courts = await Court.find({});
 
     // Get all users registered today
     const allUsers = await User.find({
       createdAt: { $gte: startOfDay }
     });
 
-    // Create a map of active users with their court information
+    // Create a map of active users with their court information using unified queue logic
     const activeUsers = [];
     const activeUserSet = new Set();
 
-    // Get current time for 60-minute check
-    const currentTime = new Date();
-
-    activeCourts.forEach(court => {
-      if (court.currentReservation && court.currentReservation.userIds) {
-        // Check if the game is still within 60 minutes
-        const startTime = new Date(court.currentReservation.startTime);
-        const timeDifferenceMinutes = (currentTime - startTime) / (1000 * 60);
+    courts.forEach(court => {
+      if (court.waitlist && court.waitlist.length > 0) {
+        // Get court status using unified logic
+        const status = WaitlistManager.getCourtStatus(court);
         
-        if (timeDifferenceMinutes < 30) {
-          court.currentReservation.userIds.forEach(userId => {
+        // If court has active reservation (queue head), get those users
+        if (status.activeReservation) {
+          const courtNumber = parseInt(court.name.replace('Court ', ''));
+          
+          status.activeReservation.usernames.forEach(username => {
             activeUsers.push({
-              username: userId,
-              courtNumber: parseInt(court.name.replace('Court ', '')),
-              startTime: court.currentReservation.startTime
+              username: username,
+              courtNumber: courtNumber,
+              startTime: status.activeReservation.startTime
             });
-            activeUserSet.add(userId);
+            activeUserSet.add(username);
           });
         }
       }
@@ -62,6 +75,7 @@ router.get('/', async (req, res) => {
   } catch (error) {
     console.error('Error fetching users:', error);
     return res.status(500).json({ 
+      success: false,
       error: error.message 
     });
   }
