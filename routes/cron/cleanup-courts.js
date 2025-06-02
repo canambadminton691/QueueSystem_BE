@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const Court = require('../../models/Court');
 const Reservation = require('../../models/Reservation');
+const WaitlistManager = require('../../utils/waitlistManager');
 
 router.get('/', async (req, res) => {
   try {
@@ -35,10 +36,24 @@ router.get('/', async (req, res) => {
       }
     }
 
+    // Process automatic waitlist progression
+    const progressionResult = await WaitlistManager.processWaitlistProgression();
+
+    // Cleanup expired waitlist entries (entries older than 4 hours)
+    const waitlistCleanup = await WaitlistManager.cleanupExpiredWaitlists(4);
+
     return res.json({ 
       success: true,
-      message: `Cleaned up ${cleanedCount} expired reservations`,
-      cleanedCount
+      message: `Cleaned up ${cleanedCount} expired reservations, processed ${progressionResult.processedCount || 0} waitlist progressions, and removed ${waitlistCleanup.totalRemoved || 0} expired waitlist entries`,
+      reservationsCleanedCount: cleanedCount,
+      waitlistProgression: progressionResult.success ? {
+        processedCount: progressionResult.processedCount,
+        processed: progressionResult.processed
+      } : { error: progressionResult.error },
+      waitlistCleanup: waitlistCleanup.success ? {
+        totalRemoved: waitlistCleanup.totalRemoved,
+        courtsAffected: waitlistCleanup.courtsAffected
+      } : { error: waitlistCleanup.error }
     });
   } catch (error) {
     console.error('Cleanup error:', error);

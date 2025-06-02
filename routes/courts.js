@@ -47,7 +47,9 @@ async function processCourtData(court) {
         name: court.name,
         isVisible: court.isVisible,
         isAvailable: true,
-        currentReservation: null
+        currentReservation: null,
+        waitlist: court.waitlist || [],
+        waitlistCount: (court.waitlist || []).length
       };
     }
   }
@@ -63,7 +65,9 @@ async function processCourtData(court) {
       userIds: court.currentReservation.userIds || [],
       type: court.currentReservation.type,
       option: court.currentReservation.option
-    } : null
+    } : null,
+    waitlist: court.waitlist || [],
+    waitlistCount: (court.waitlist || []).length
   };
 }
 
