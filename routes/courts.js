@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Court = require('../models/Court');
 const Reservation = require('../models/Reservation');
+const WaitlistManager = require('../utils/waitlistManager');
 
 // Constants
 const ADMIN_PASSWORD = 'canamadmin';
@@ -20,51 +21,27 @@ const validateAdmin = (req, res, next) => {
   next();
 };
 
-// Utility function to process court data and update expired games
+// Utility function to process court data using unified queue logic
 async function processCourtData(court) {
-  const currentTime = new Date();
-  
-  // Check if the court has an active reservation
-  if (court.currentReservation) {
-    const startTime = new Date(court.currentReservation.startTime);
-    const timeDifferenceMinutes = (currentTime - startTime) / (1000 * 60);
-    
-    // If 30 minutes have passed, update the database
-    if (timeDifferenceMinutes >= 30) {
-      // Update the court in database
-      await Court.findByIdAndUpdate(court._id, {
-        isAvailable: true,
-        currentReservation: null
-      });
-
-      // Delete or archive the reservation
-      if (court.currentReservation._id) {
-        await Reservation.findByIdAndDelete(court.currentReservation._id);
-      }
-
-      return {
-        _id: court._id,
-        name: court.name,
-        isVisible: court.isVisible,
-        isAvailable: true,
-        currentReservation: null,
-        waitlist: court.waitlist || [],
-        waitlistCount: (court.waitlist || []).length
-      };
-    }
+  // Only process queue progression if court has a waitlist
+  if (court.waitlist && court.waitlist.length > 0) {
+    await WaitlistManager.processQueueProgression(court);
+    await court.save();
   }
-
-  // Return court data with current reservation if game is still active
+  
+  // Get current status using unified logic
+  const status = WaitlistManager.getCourtStatus(court);
+  
   return {
     _id: court._id,
     name: court.name,
     isVisible: court.isVisible,
-    isAvailable: court.isAvailable,
-    currentReservation: court.currentReservation ? {
-      startTime: court.currentReservation.startTime,
-      userIds: court.currentReservation.userIds || [],
-      type: court.currentReservation.type,
-      option: court.currentReservation.option
+    isAvailable: status.isAvailable,
+    currentReservation: status.activeReservation ? {
+      startTime: status.activeReservation.startTime,
+      userIds: status.activeReservation.usernames || [],
+      type: status.activeReservation.usernames?.length === 1 ? 'half' : 'full',
+      option: 'queue'
     } : null,
     waitlist: court.waitlist || [],
     waitlistCount: (court.waitlist || []).length
@@ -85,7 +62,8 @@ async function ensureAllCourtsExist() {
       courtsToCreate.push({
         name: courtName,
         isAvailable: true,
-        isVisible: true
+        isVisible: true,
+        waitlist: []
       });
     }
   }
@@ -101,12 +79,11 @@ router.get('/', async (req, res) => {
     // Ensure all courts exist
     await ensureAllCourtsExist();
     
-    // Fetch only visible courts with populated reservation data
+    // Fetch only visible courts (no populate needed in unified system)
     const courts = await Court.find({ isVisible: true })
-      .populate('currentReservation')
       .sort({ name: 1 });
 
-    // Transform the data and update expired games in database
+    // Transform the data using unified queue logic
     const safeCourtData = await Promise.all(courts.map(processCourtData));
 
     res.json({ 
@@ -127,12 +104,11 @@ router.get('/all', validateAdmin, async (req, res) => {
     // Ensure all courts exist
     await ensureAllCourtsExist();
     
-    // Fetch all courts (including invisible) with populated reservation data
+    // Fetch all courts (including invisible, no populate needed in unified system)
     const courts = await Court.find()
-      .populate('currentReservation')
       .sort({ name: 1 });
 
-    // Transform the data and update expired games in database
+    // Transform the data using unified queue logic
     const safeCourtData = await Promise.all(courts.map(processCourtData));
 
     res.json({ 
