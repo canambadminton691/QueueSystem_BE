@@ -290,11 +290,10 @@ class WaitlistManager {
           errorMessage = `Same user group already in waitlist at ${sameGroupConflicts[0].courtName} (position ${sameGroupConflicts[0].waitlistIndex})`;
         } else if (individualUserConflicts.length > 0) {
           // Check if it's the same court - provide different message
-          const sameCourt = individualUserConflicts.some(c => c.courtId.toString() === courtId.toString());
-          if (sameCourt) {
-            const conflictUsers = individualUserConflicts
-              .filter(c => c.courtId.toString() === courtId.toString())
-              .map(c => c.username);
+          const sameCourt = individualUserConflicts
+            .filter(c => c.courtId.toString() === courtId.toString());
+          if (sameCourt.length > 0) {
+            const conflictUsers = sameCourt.map(c => c.username);
             errorMessage = `Users already in this court's waitlist: ${conflictUsers.join(', ')}`;
           } else {
             errorMessage = `Users already in waitlist: ${individualUserConflicts.map(c => `${c.username} at ${c.courtName}`).join(', ')}`;
@@ -329,7 +328,7 @@ class WaitlistManager {
       const reservation = new Reservation({
         courtId: courtId,
         userIds: usernames,
-        type: usernames.length === 1 ? 'half' : 'full',
+        type: usernames.length === 2 ? 'half' : 'full',
         startTime: startTime,
         option: 'queue' // Mark as queue-based reservation
       });
@@ -814,6 +813,184 @@ class WaitlistManager {
         success: false,
         error: error.message
       };
+    }
+  }
+
+  /**
+   * Remove a reservation from the queue with proper time recalculation
+   * @param {String} courtId - MongoDB ObjectId of the court
+   * @param {String} username - Username to remove from the queue
+   * @returns {Object} - Success status and operation details
+   */
+  static async removeReservation(courtId, username) {
+    try {
+      const court = await Court.findById(courtId);
+      if (!court) {
+        throw new Error('Court not found');
+      }
+
+      if (court.waitlist.length === 0) {
+        throw new Error('No reservations in queue to remove');
+      }
+
+      let userFound = false;
+      let entireReservationRemoved = false;
+      let removedFromHead = false;
+      let removedEntries = [];
+
+      // Sort waitlist by index to ensure proper order
+      court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
+
+      // Find the user in waitlist entries and remove them
+      for (let i = court.waitlist.length - 1; i >= 0; i--) {
+        const entry = court.waitlist[i];
+        const userIndex = entry.usernames.indexOf(username);
+        
+        if (userIndex !== -1) {
+          userFound = true;
+          const isHead = (entry.waitlistIndex === 1); // Head of queue
+          
+          // Remove the user from this entry
+          entry.usernames.splice(userIndex, 1);
+
+          // Check if entire reservation becomes empty after removal
+          if (entry.usernames.length === 0) {
+            entireReservationRemoved = true;
+            removedFromHead = isHead;
+            
+            // Delete the linked reservation
+            if (entry.reservationId) {
+              await Reservation.findByIdAndDelete(entry.reservationId);
+            }
+            
+            removedEntries.push({
+              waitlistIndex: entry.waitlistIndex,
+              wasEmpty: true,
+              reservationDeleted: !!entry.reservationId,
+              wasHead: isHead
+            });
+            
+            court.waitlist.splice(i, 1);
+          } else {
+            // Reservation still has users - just update the reservation, NO TIME CHANGES
+            if (entry.reservationId) {
+              await Reservation.findByIdAndUpdate(entry.reservationId, {
+                userIds: entry.usernames,
+                type: entry.usernames.length === 1 ? 'half' : 'full'
+              });
+            }
+            // Don't change any start times since reservation continues
+          }
+          break; // Exit loop after finding and removing user
+        }
+      }
+
+      if (!userFound) {
+        throw new Error('User not found in any reservation for this court');
+      }
+
+      // Only recalculate times if an entire reservation was removed
+      if (entireReservationRemoved) {
+        // Reorder indices first
+        await this.reorderWaitlistIndices(court);
+
+        // Recalculate start times based on removal location
+        if (removedFromHead) {
+          // Removed head reservation: recalculate ALL times from now
+          await this.recalculateStartTimesFromHead(court);
+        } else {
+          // Removed non-head reservation: only recalculate reservations behind it
+          await this.recalculateStartTimesFromPosition(court);
+        }
+      }
+
+      // Update court availability
+      if (court.waitlist.length === 0) {
+        court.isAvailable = true;
+      }
+
+      await court.save();
+
+      return {
+        success: true,
+        message: `Reservation for ${username} successfully removed from queue`,
+        userRemoved: username,
+        entireReservationRemoved: entireReservationRemoved,
+        removedFromHead: removedFromHead,
+        entriesCleanedUp: removedEntries.length,
+        cleanedEntries: removedEntries,
+        waitlistReordered: entireReservationRemoved,
+        remainingQueue: court.waitlist.length,
+        courtNowAvailable: court.waitlist.length === 0,
+        timesRecalculated: entireReservationRemoved
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Recalculate start times from head (when head is removed)
+   * @param {Object} court - Court document with waitlist
+   * @returns {void}
+   */
+  static async recalculateStartTimesFromHead(court) {
+    if (court.waitlist.length === 0) return;
+    
+    // Sort by index first
+    court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
+    
+    // Start from now since head was removed
+    const now = new Date();
+    
+    // Update start times with 40-minute intervals starting from now
+    court.waitlist.forEach((entry, index) => {
+      entry.startTime = new Date(now.getTime() + (index * 40 * 60000));
+      
+      // Update linked reservation time as well
+      if (entry.reservationId) {
+        Reservation.findByIdAndUpdate(entry.reservationId, {
+          startTime: entry.startTime
+        }).exec(); // Run async without waiting
+      }
+    });
+  }
+
+  /**
+   * Recalculate start times from a specific position (when non-head is removed)
+   * @param {Object} court - Court document with waitlist
+   * @returns {void}
+   */
+  static async recalculateStartTimesFromPosition(court) {
+    if (court.waitlist.length === 0) return;
+    
+    // Sort by index first
+    court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
+    
+    // For non-head removals, maintain existing head time and recalculate from there
+    if (court.waitlist.length > 0) {
+      const headStartTime = court.waitlist[0].startTime;
+      
+      // Update start times with 40-minute intervals from head
+      court.waitlist.forEach((entry, index) => {
+        if (index === 0) {
+          // Keep head time unchanged
+          return;
+        }
+        
+        entry.startTime = new Date(headStartTime.getTime() + (index * 40 * 60000));
+        
+        // Update linked reservation time as well
+        if (entry.reservationId) {
+          Reservation.findByIdAndUpdate(entry.reservationId, {
+            startTime: entry.startTime
+          }).exec(); // Run async without waiting
+        }
+      });
     }
   }
 }

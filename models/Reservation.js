@@ -13,7 +13,7 @@ const ReservationSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: ['half', 'full']  // Make sure these exact values are allowed
+    enum: ['full', 'half']  // Make sure these exact values are allowed
   },
   option: {
     type: String,

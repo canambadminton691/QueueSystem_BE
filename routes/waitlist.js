@@ -90,26 +90,44 @@ router.post('/:courtId/join', async (req, res) => {
   }
 });
 
-// Drop user from waitlist (user-initiated)
+// Drop user from waitlist (user-initiated with phone verification)
 router.post('/:courtId/drop', async (req, res) => {
   try {
     const { courtId } = req.params;
-    const { username } = req.body;
+    const { phoneNumber, animalName } = req.body;
 
-    if (!username) {
+    if (!phoneNumber || !animalName) {
       return res.status(400).json({
         success: false,
-        error: 'Username is required'
+        error: 'Phone number and animal name are required'
       });
     }
 
-    const result = await WaitlistManager.dropUserFromWaitlist(courtId, username);
+    // Verify user exists with matching phone number and animal name
+    const user = await User.findOne({ 
+      phoneNumber: phoneNumber, 
+      animalName: animalName,
+      expiresAt: { $gt: new Date() } // Make sure user hasn't expired
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid phone number and animal name combination, or user has expired'
+      });
+    }
+
+    // If verification passes, drop the user from waitlist using their animal name
+    const result = await WaitlistManager.removeReservation(courtId, animalName);
     
     if (!result.success) {
       return res.status(400).json(result);
     }
 
-    res.json(result);
+    res.json({
+      ...result,
+      message: `User ${animalName} (${phoneNumber}) successfully dropped from waitlist`
+    });
 
   } catch (error) {
     console.error('Error dropping from waitlist:', error);
