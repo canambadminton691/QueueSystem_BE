@@ -3,6 +3,7 @@ const router = express.Router();
 const Court = require('../models/Court');
 const User = require('../models/User');
 const WaitlistManager = require('../utils/waitlistManager');
+const PSTTimeUtils = require('../utils/pstTime');
 
 // Check court availability before joining waitlist
 router.get('/:courtId/availability', async (req, res) => {
@@ -104,10 +105,11 @@ router.post('/:courtId/drop', async (req, res) => {
     }
 
     // Verify user exists with matching phone number and animal name
+    const now = PSTTimeUtils.getPSTTime();
     const user = await User.findOne({ 
       phoneNumber: phoneNumber, 
       animalName: animalName,
-      expiresAt: { $gt: new Date() } // Make sure user hasn't expired
+      expiresAt: { $gt: now } // Make sure user hasn't expired (using PST)
     });
 
     if (!user) {
@@ -189,17 +191,22 @@ router.get('/', async (req, res) => {
       .select('name isAvailable waitlist')
       .sort({ name: 1 });
 
-    const now = new Date();
+    // Use PST time for calculations
+    const now = PSTTimeUtils.getPSTTime();
+    
     const allWaitlists = courts.map(court => {
       const waitlistWithTime = court.waitlist
         .sort((a, b) => a.waitlistIndex - b.waitlistIndex)
-        .map(entry => ({
-          waitlistIndex: entry.waitlistIndex,
-          usernames: entry.usernames,
-          startTime: entry.startTime,
-          waitingTime: Math.floor((now - entry.startTime) / 60000), // minutes
-          isReady: now >= new Date(entry.startTime)
-        }));
+        .map(entry => {
+          const entryStartTime = PSTTimeUtils.toPSTTime(entry.startTime);
+          return {
+            waitlistIndex: entry.waitlistIndex,
+            usernames: entry.usernames,
+            startTime: entry.startTime,
+            waitingTime: Math.floor((now - entryStartTime) / 60000), // minutes in PST
+            isReady: now >= entryStartTime
+          };
+        });
 
       return {
         court: {

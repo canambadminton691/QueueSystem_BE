@@ -3,6 +3,7 @@ const router = express.Router();
 const User = require('../models/User');
 const { getUniqueAnimalName } = require('../utils/animals');
 const { validatePhoneNumber } = require('../utils/validation');
+const PSTTimeUtils = require('../utils/pstTime');
 
 router.post('/', async (req, res) => {
   console.log('Register API called');
@@ -29,14 +30,13 @@ router.post('/', async (req, res) => {
 
     const cleanedPhone = validation.cleaned;
 
-    // Get current date in PST
-    const now = new Date();
-    const pstDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
-    const startOfDay = new Date(pstDate);
+    // Get current PST time and start of PST day
+    const pstNow = PSTTimeUtils.getPSTTime();
+    const startOfDay = new Date(pstNow);
     startOfDay.setHours(0, 0, 0, 0);
     
     try {
-      // Check if user already exists and registered today
+      // Check if user already exists and registered today (in PST)
       let user = await User.findOne({ 
         phoneNumber: cleanedPhone,
         createdAt: { $gte: startOfDay }
@@ -49,7 +49,8 @@ router.post('/', async (req, res) => {
           user: {
             phoneNumber: user.phoneNumber,
             animalName: user.animalName,
-            createdAt: user.createdAt
+            createdAt: user.getPSTCreatedAt(), // Return PST formatted time
+            createdAtISO: user.createdAt // Keep ISO for compatibility if needed
           },
           isExisting: true
         });
@@ -64,11 +65,11 @@ router.post('/', async (req, res) => {
       // Get a unique animal name
       const animalName = await getUniqueAnimalName(User);
 
-      // Create new user
+      // Create new user (timestamps will be set automatically using PST)
       user = await User.create({
         phoneNumber: cleanedPhone,
-        animalName,
-        createdAt: now
+        animalName
+        // createdAt and expiresAt will be set automatically by the schema defaults
       });
 
       console.log('Created new user:', user);
@@ -78,7 +79,8 @@ router.post('/', async (req, res) => {
         user: {
           phoneNumber: user.phoneNumber,
           animalName: user.animalName,
-          createdAt: user.createdAt
+          createdAt: user.getPSTCreatedAt(), // Return PST formatted time
+          createdAtISO: user.createdAt // Keep ISO for compatibility if needed
         },
         isExisting: false
       });

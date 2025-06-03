@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const PSTTimeUtils = require('../utils/pstTime');
 
 const userSchema = new mongoose.Schema({
   phoneNumber: {
@@ -13,15 +14,17 @@ const userSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     required: true,
-    default: Date.now
+    default: function() {
+      return PSTTimeUtils.getPSTTime();
+    }
   },
   expiresAt: {
     type: Date,
     required: true,
     default: function() {
-      const now = new Date();
-      const pst = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
-      const endOfDay = new Date(pst);
+      const pstNow = PSTTimeUtils.getPSTTime();
+      const endOfDay = new Date(pstNow);
+      // Set to end of PST day (11:59:59 PM PST)
       endOfDay.setHours(23, 59, 59, 999);
       return endOfDay;
     }
@@ -30,8 +33,17 @@ const userSchema = new mongoose.Schema({
 
 // Add method to check if user is valid (registered today in PST)
 userSchema.methods.isValid = function() {
-  const now = new Date();
+  const now = PSTTimeUtils.getPSTTime();
   return now <= this.expiresAt;
+};
+
+// Add method to get PST formatted timestamps
+userSchema.methods.getPSTCreatedAt = function() {
+  return PSTTimeUtils.getPSTTimeString(this.createdAt);
+};
+
+userSchema.methods.getPSTExpiresAt = function() {
+  return PSTTimeUtils.getPSTTimeString(this.expiresAt);
 };
 
 // Add indexes for better performance

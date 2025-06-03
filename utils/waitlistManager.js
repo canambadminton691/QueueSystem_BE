@@ -1,6 +1,7 @@
 const Court = require('../models/Court');
 const User = require('../models/User');
 const Reservation = require('../models/Reservation');
+const PSTTimeUtils = require('./pstTime');
 
 /**
  * Waitlist Management Utility Functions
@@ -10,12 +11,58 @@ const Reservation = require('../models/Reservation');
 class WaitlistManager {
   
   /**
+   * Get current time in Pacific Standard Time (PST/PDT) as a Date object
+   * @returns {Date} - Date object representing current time in PST
+   */
+  static getPSTTime() {
+    return PSTTimeUtils.getPSTTime();
+  }
+
+  /**
+   * Get PST local time string for display purposes
+   * @param {Date} date - Date to format in PST
+   * @returns {string} - PST time string
+   */
+  static getPSTTimeString(date = null) {
+    return PSTTimeUtils.getPSTTimeString(date);
+  }
+
+  /**
+   * Convert a time to PST timezone for comparisons
+   * @param {Date|string|number} time - Time to convert to PST
+   * @returns {Date} - Date object for PST comparisons
+   */
+  static toPSTTime(time) {
+    return PSTTimeUtils.toPSTTime(time);
+  }
+
+  /**
+   * Add minutes to a time
+   * @param {Date} time - Date object
+   * @param {number} minutes - Minutes to add
+   * @returns {Date} - New date object
+   */
+  static addMinutesToPST(time, minutes) {
+    return PSTTimeUtils.addMinutesToPST(time, minutes);
+  }
+
+  /**
+   * Compare times in PST timezone
+   * @param {Date} time1 - First time
+   * @param {Date} time2 - Second time
+   * @returns {number} - Comparison result (-1, 0, 1)
+   */
+  static comparePSTTimes(time1, time2) {
+    return PSTTimeUtils.comparePSTTimes(time1, time2);
+  }
+
+  /**
    * Get current court status using unified queue logic
    * @param {Object} court - Court document
    * @returns {Object} - Court status information
    */
   static getCourtStatus(court) {
-    const now = new Date();
+    const now = this.getPSTTime(); // Use PST time
     
     if (!court.waitlist || court.waitlist.length === 0) {
       return {
@@ -29,7 +76,7 @@ class WaitlistManager {
     // Sort waitlist to ensure proper order
     const sortedQueue = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
     const head = sortedQueue[0];
-    const headEndTime = new Date(new Date(head.startTime).getTime() + 30 * 60000); // 30 min duration
+    const headEndTime = this.addMinutesToPST(this.toPSTTime(head.startTime), 30); // 30 min duration
 
     return {
       isAvailable: now >= headEndTime, // Head expired = court available
@@ -133,10 +180,10 @@ class WaitlistManager {
   /**
    * Calculate smart start time for waitlist entry (unified logic)
    * @param {Object} court - Court document
-   * @returns {Date} - Calculated start time
+   * @returns {Date} - Calculated start time in PST
    */
   static calculateStartTime(court) {
-    const now = new Date();
+    const now = this.getPSTTime(); // Use PST time
     const status = this.getCourtStatus(court);
     
     if (status.queueLength === 0) {
@@ -149,7 +196,7 @@ class WaitlistManager {
     const lastEntry = sortedQueue[sortedQueue.length - 1];
     
     // Next entry starts 40 minutes after last entry's start time
-    return new Date(new Date(lastEntry.startTime).getTime() + 40 * 60000);
+    return this.addMinutesToPST(this.toPSTTime(lastEntry.startTime), 40);
   }
 
   /**
@@ -325,11 +372,11 @@ class WaitlistManager {
       const nextIndex = this.getNextWaitlistIndex(updatedCourt.waitlist);
 
       // Create reservation in Reservations schema for the future booking
-      const endTime = new Date(startTime.getTime() + 30 * 60000); // 30 minutes later
+      const endTime = this.addMinutesToPST(startTime, 30); // 30 minutes later in PST
       const reservation = new Reservation({
         courtId: courtId,
         userIds: usernames,
-        type: usernames.length != 4 ? 'half' : 'full',
+        type: usernames.length !== 4 ? 'half' : 'full',
         startTime: startTime,
         endTime: endTime,
         option: 'queue' // Mark as queue-based reservation
@@ -421,7 +468,7 @@ class WaitlistManager {
             if (entry.reservationId) {
               await Reservation.findByIdAndUpdate(entry.reservationId, {
                 userIds: entry.usernames,
-                type: entry.usernames.length != 4 ? 'half' : 'full'
+                type: entry.usernames.length !== 4 ? 'half' : 'full'
               });
             }
           }
@@ -469,20 +516,20 @@ class WaitlistManager {
     // Sort by index first
     court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
     
-    // Calculate start time for first entry
-    let baseTime = new Date(); // Start from now for first entry
+    // Calculate start time for first entry using PST
+    let baseTime = this.getPSTTime(); // Start from PST now for first entry
     
     // Update start times with 40-minute intervals
     court.waitlist.forEach((entry, index) => {
       if (index === 0) {
         entry.startTime = baseTime;
       } else {
-        entry.startTime = new Date(baseTime.getTime() + (index * 40 * 60000));
+        entry.startTime = this.addMinutesToPST(baseTime, index * 40);
       }
       
       // Update linked reservation with both start and end time (30-minute duration)
       if (entry.reservationId) {
-        const endTime = new Date(entry.startTime.getTime() + 30 * 60000); // 30 minutes later
+        const endTime = this.addMinutesToPST(entry.startTime, 30); // 30 minutes later in PST
         Reservation.findByIdAndUpdate(entry.reservationId, {
           startTime: entry.startTime,
           endTime: endTime
@@ -716,17 +763,20 @@ class WaitlistManager {
         throw new Error('Court not found');
       }
 
-      // Sort waitlist by index and add waiting time
-      const now = new Date();
+      // Sort waitlist by index and add waiting time using PST
+      const now = this.getPSTTime(); // Use PST time
       const sortedWaitlist = court.waitlist
         .sort((a, b) => a.waitlistIndex - b.waitlistIndex)
-        .map(entry => ({
-          waitlistIndex: entry.waitlistIndex,
-          usernames: entry.usernames,
-          startTime: entry.startTime,
-          waitingTime: Math.floor((now - entry.startTime) / 60000), // minutes
-          isReady: now >= new Date(entry.startTime)
-        }));
+        .map(entry => {
+          const entryStartTime = this.toPSTTime(entry.startTime);
+          return {
+            waitlistIndex: entry.waitlistIndex,
+            usernames: entry.usernames,
+            startTime: entry.startTime,
+            waitingTime: Math.floor((now - entryStartTime) / 60000), // minutes in PST
+            isReady: now >= entryStartTime
+          };
+        });
 
       return {
         success: true,
@@ -766,13 +816,15 @@ class WaitlistManager {
       // Sort and get first entry
       const sortedWaitlist = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
       const nextEntry = sortedWaitlist[0];
+      const now = this.getPSTTime(); // Use PST time
+      const entryStartTime = this.toPSTTime(nextEntry.startTime);
 
       return {
         success: true,
         nextInLine: nextEntry,
         suggestedAction: 'Create reservation for these users',
         remainingWaitlist: sortedWaitlist.length - 1,
-        isReady: new Date() >= new Date(nextEntry.startTime)
+        isReady: now >= entryStartTime
       };
 
     } catch (error) {
@@ -791,7 +843,9 @@ class WaitlistManager {
   static async cleanupExpiredWaitlists(maxWaitTimeHours = 4) {
     try {
       const courts = await Court.find({});
-      const cutoffTime = new Date(Date.now() - (maxWaitTimeHours * 60 * 60 * 1000));
+      // Calculate cutoff time in PST
+      const now = this.getPSTTime();
+      const cutoffTime = this.addMinutesToPST(now, -(maxWaitTimeHours * 60)); // Subtract hours
       
       let totalRemoved = 0;
       let courtsAffected = 0;
@@ -799,8 +853,11 @@ class WaitlistManager {
       for (const court of courts) {
         const originalLength = court.waitlist.length;
         
-        // Remove expired entries
-        court.waitlist = court.waitlist.filter(entry => entry.startTime > cutoffTime);
+        // Remove expired entries (compare in PST)
+        court.waitlist = court.waitlist.filter(entry => {
+          const entryStartTime = this.toPSTTime(entry.startTime);
+          return entryStartTime > cutoffTime;
+        });
         
         if (court.waitlist.length !== originalLength) {
           // Reorder indices after removing expired entries
@@ -887,7 +944,7 @@ class WaitlistManager {
             if (entry.reservationId) {
               await Reservation.findByIdAndUpdate(entry.reservationId, {
                 userIds: entry.usernames,
-                type: entry.usernames.length != 4 ? 'half' : 'full'
+                type: entry.usernames.length !== 4 ? 'half' : 'full'
               });
             }
             // Don't change any start times since reservation continues
@@ -955,16 +1012,16 @@ class WaitlistManager {
     // Sort by index first
     court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
     
-    // Start from now since head was removed
-    const now = new Date();
+    // Start from PST now since head was removed
+    const now = this.getPSTTime();
     
-    // Update start times with 40-minute intervals starting from now
+    // Update start times with 40-minute intervals starting from PST now
     court.waitlist.forEach((entry, index) => {
-      entry.startTime = new Date(now.getTime() + (index * 40 * 60000));
+      entry.startTime = this.addMinutesToPST(now, index * 40);
       
       // Update linked reservation with both start and end time (30-minute duration)
       if (entry.reservationId) {
-        const endTime = new Date(entry.startTime.getTime() + 30 * 60000); // 30 minutes later
+        const endTime = this.addMinutesToPST(entry.startTime, 30); // 30 minutes later in PST
         Reservation.findByIdAndUpdate(entry.reservationId, {
           startTime: entry.startTime,
           endTime: endTime
@@ -986,14 +1043,14 @@ class WaitlistManager {
     
     // For non-head removals, maintain existing head time and recalculate from there
     if (court.waitlist.length > 0) {
-      const headStartTime = court.waitlist[0].startTime;
+      const headStartTime = this.toPSTTime(court.waitlist[0].startTime);
       
       // Update start times with 40-minute intervals from head
       court.waitlist.forEach((entry, index) => {
         if (index === 0) {
           // Keep head time unchanged - but still update end time if needed
           if (entry.reservationId) {
-            const endTime = new Date(entry.startTime.getTime() + 30 * 60000);
+            const endTime = this.addMinutesToPST(this.toPSTTime(entry.startTime), 30);
             Reservation.findByIdAndUpdate(entry.reservationId, {
               endTime: endTime
             }).exec();
@@ -1001,11 +1058,11 @@ class WaitlistManager {
           return;
         }
         
-        entry.startTime = new Date(headStartTime.getTime() + (index * 40 * 60000));
+        entry.startTime = this.addMinutesToPST(headStartTime, index * 40);
         
         // Update linked reservation with both start and end time (30-minute duration)
         if (entry.reservationId) {
-          const endTime = new Date(entry.startTime.getTime() + 30 * 60000); // 30 minutes later
+          const endTime = this.addMinutesToPST(entry.startTime, 30); // 30 minutes later in PST
           Reservation.findByIdAndUpdate(entry.reservationId, {
             startTime: entry.startTime,
             endTime: endTime
