@@ -325,11 +325,13 @@ class WaitlistManager {
       const nextIndex = this.getNextWaitlistIndex(updatedCourt.waitlist);
 
       // Create reservation in Reservations schema for the future booking
+      const endTime = new Date(startTime.getTime() + 30 * 60000); // 30 minutes later
       const reservation = new Reservation({
         courtId: courtId,
         userIds: usernames,
-        type: usernames.length === 2 ? 'half' : 'full',
+        type: usernames.length != 4 ? 'half' : 'full',
         startTime: startTime,
+        endTime: endTime,
         option: 'queue' // Mark as queue-based reservation
       });
       
@@ -419,7 +421,7 @@ class WaitlistManager {
             if (entry.reservationId) {
               await Reservation.findByIdAndUpdate(entry.reservationId, {
                 userIds: entry.usernames,
-                type: entry.usernames.length === 1 ? 'half' : 'full'
+                type: entry.usernames.length != 4 ? 'half' : 'full'
               });
             }
           }
@@ -476,6 +478,15 @@ class WaitlistManager {
         entry.startTime = baseTime;
       } else {
         entry.startTime = new Date(baseTime.getTime() + (index * 40 * 60000));
+      }
+      
+      // Update linked reservation with both start and end time (30-minute duration)
+      if (entry.reservationId) {
+        const endTime = new Date(entry.startTime.getTime() + 30 * 60000); // 30 minutes later
+        Reservation.findByIdAndUpdate(entry.reservationId, {
+          startTime: entry.startTime,
+          endTime: endTime
+        }).exec(); // Run async without waiting
       }
     });
   }
@@ -876,7 +887,7 @@ class WaitlistManager {
             if (entry.reservationId) {
               await Reservation.findByIdAndUpdate(entry.reservationId, {
                 userIds: entry.usernames,
-                type: entry.usernames.length === 1 ? 'half' : 'full'
+                type: entry.usernames.length != 4 ? 'half' : 'full'
               });
             }
             // Don't change any start times since reservation continues
@@ -951,10 +962,12 @@ class WaitlistManager {
     court.waitlist.forEach((entry, index) => {
       entry.startTime = new Date(now.getTime() + (index * 40 * 60000));
       
-      // Update linked reservation time as well
+      // Update linked reservation with both start and end time (30-minute duration)
       if (entry.reservationId) {
+        const endTime = new Date(entry.startTime.getTime() + 30 * 60000); // 30 minutes later
         Reservation.findByIdAndUpdate(entry.reservationId, {
-          startTime: entry.startTime
+          startTime: entry.startTime,
+          endTime: endTime
         }).exec(); // Run async without waiting
       }
     });
@@ -978,16 +991,24 @@ class WaitlistManager {
       // Update start times with 40-minute intervals from head
       court.waitlist.forEach((entry, index) => {
         if (index === 0) {
-          // Keep head time unchanged
+          // Keep head time unchanged - but still update end time if needed
+          if (entry.reservationId) {
+            const endTime = new Date(entry.startTime.getTime() + 30 * 60000);
+            Reservation.findByIdAndUpdate(entry.reservationId, {
+              endTime: endTime
+            }).exec();
+          }
           return;
         }
         
         entry.startTime = new Date(headStartTime.getTime() + (index * 40 * 60000));
         
-        // Update linked reservation time as well
+        // Update linked reservation with both start and end time (30-minute duration)
         if (entry.reservationId) {
+          const endTime = new Date(entry.startTime.getTime() + 30 * 60000); // 30 minutes later
           Reservation.findByIdAndUpdate(entry.reservationId, {
-            startTime: entry.startTime
+            startTime: entry.startTime,
+            endTime: endTime
           }).exec(); // Run async without waiting
         }
       });
