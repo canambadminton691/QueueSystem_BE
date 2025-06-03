@@ -4,6 +4,7 @@ const Court = require('../models/Court');
 const User = require('../models/User');
 const WaitlistManager = require('../utils/waitlistManager');
 const PSTTimeUtils = require('../utils/pstTime');
+const queueScheduler = require('../utils/queueScheduler');
 
 // Check court availability before joining waitlist
 router.get('/:courtId/availability', async (req, res) => {
@@ -27,6 +28,61 @@ router.post('/process-progression', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error processing waitlist progression:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Auto-process expired queue heads across all courts (NEW)
+router.post('/auto-process-expired', async (req, res) => {
+  try {
+    const result = await WaitlistManager.autoProcessExpiredQueues();
+    res.json(result);
+  } catch (error) {
+    console.error('Error auto-processing expired queues:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Check specific court for expired head and process it (NEW)
+router.post('/:courtId/check-expired', async (req, res) => {
+  try {
+    const { courtId } = req.params;
+    
+    const court = await Court.findById(courtId);
+    if (!court) {
+      return res.status(404).json({
+        success: false,
+        error: 'Court not found'
+      });
+    }
+
+    const result = await WaitlistManager.processQueueProgression(court);
+    
+    if (result.processed) {
+      await court.save();
+      res.json({
+        success: true,
+        message: 'Queue head processed',
+        removedEntries: result.removedEntries,
+        activatedEntry: result.activatedEntry,
+        newQueueLength: result.queueLength
+      });
+    } else {
+      res.json({
+        success: true,
+        message: 'No expired entries to process',
+        queueLength: result.queueLength
+      });
+    }
+
+  } catch (error) {
+    console.error('Error checking expired queue head:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -305,6 +361,37 @@ router.get('/debug/user/:username', async (req, res) => {
 
   } catch (error) {
     console.error('Error searching for user in waitlists:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Queue Scheduler Management Endpoints
+// Get scheduler status
+router.get('/scheduler/status', (req, res) => {
+  try {
+    const status = queueScheduler.getStatus();
+    res.json({
+      success: true,
+      scheduler: status
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Run scheduler once (for testing)
+router.post('/scheduler/run-once', async (req, res) => {
+  try {
+    const result = await queueScheduler.runOnce();
+    res.json(result);
+  } catch (error) {
+    console.error('Error running scheduler once:', error);
     res.status(500).json({
       success: false,
       error: error.message

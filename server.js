@@ -4,6 +4,9 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 require('dotenv').config();
 
+// Import queue scheduler
+const queueScheduler = require('./utils/queueScheduler');
+
 // Import routes
 const courtsRoutes = require('./routes/courts');
 const registerRoutes = require('./routes/register');
@@ -35,12 +38,16 @@ app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => {
     console.log('MongoDB connection successful');
+    
+    // Start the queue scheduler after DB connection
+    queueScheduler.start(2); // Check every 2 minutes
   })
   .catch(err => console.error('MongoDB connection error:', err))
   .finally(() => {
-    // No matter connect MongoDB success or fail，start the server
+    // Start the server
     app.listen(PORT, () => {
       console.log(`Server running on port: ${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV || 'production'}`);
       console.log(`Test the API at http://localhost:${PORT}`);
     });
   });
@@ -77,8 +84,15 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on port: ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n🛑 Shutting down server...');
+  queueScheduler.stop();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n🛑 Shutting down server...');
+  queueScheduler.stop();
+  process.exit(0);
 });

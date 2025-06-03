@@ -61,7 +61,7 @@ class WaitlistManager {
    * @param {Object} court - Court document
    * @returns {Object} - Court status information
    */
-  static getCourtStatus(court) {
+  static async getCourtStatus(court) {
     const now = this.getPSTTime(); // Use PST time
     
     if (!court.waitlist || court.waitlist.length === 0) {
@@ -76,14 +76,35 @@ class WaitlistManager {
     // Sort waitlist to ensure proper order
     const sortedQueue = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
     const head = sortedQueue[0];
-    const headEndTime = this.addMinutesToPST(this.toPSTTime(head.startTime), 30); // 30 min duration
+    
+    let headEndTime;
+    
+    // Try to get actual endTime from reservation, fallback to calculated time
+    if (head.reservationId) {
+      try {
+        const reservation = await Reservation.findById(head.reservationId);
+        if (reservation && reservation.endTime) {
+          headEndTime = this.toPSTTime(reservation.endTime);
+        } else {
+          // Fallback: calculate from startTime + 30 minutes
+          headEndTime = this.addMinutesToPST(this.toPSTTime(head.startTime), 30);
+        }
+      } catch (error) {
+        // If reservation lookup fails, fallback to calculation
+        headEndTime = this.addMinutesToPST(this.toPSTTime(head.startTime), 30);
+      }
+    } else {
+      // No reservation linked, calculate from startTime + 30 minutes
+      headEndTime = this.addMinutesToPST(this.toPSTTime(head.startTime), 30);
+    }
 
     return {
       isAvailable: now >= headEndTime, // Head expired = court available
       activeReservation: now < headEndTime ? head : null, // Head active if not expired
       nextEntry: sortedQueue.length > 1 ? sortedQueue[1] : null,
       queueLength: sortedQueue.length,
-      headExpired: now >= headEndTime
+      headExpired: now >= headEndTime,
+      headEndTime: headEndTime // Include actual end time for debugging
     };
   }
 
@@ -93,13 +114,22 @@ class WaitlistManager {
    * @returns {Object} - Processing result
    */
   static async processQueueProgression(court) {
-    const status = this.getCourtStatus(court);
+    const status = await this.getCourtStatus(court);
     let processed = false;
+    let removedEntries = [];
     let activatedEntry = null;
 
-    // If head is expired, remove it and activate next
+    // If head is expired, remove it and DON'T change other times
     if (status.headExpired && court.waitlist.length > 0) {
       const expiredEntry = court.waitlist[0];
+      
+      // Store info about expired entry
+      removedEntries.push({
+        waitlistIndex: expiredEntry.waitlistIndex,
+        usernames: expiredEntry.usernames,
+        startTime: expiredEntry.startTime,
+        expired: true
+      });
       
       // Remove expired reservation if it exists
       if (expiredEntry.reservationId) {
@@ -109,8 +139,8 @@ class WaitlistManager {
       // Remove head from queue
       court.waitlist.splice(0, 1);
       
-      // Reorder remaining entries
-      await this.reorderWaitlistIndices(court);
+      // Reorder remaining entries but DON'T change their start times
+      await this.reorderWaitlistIndicesOnly(court);
       
       processed = true;
       activatedEntry = court.waitlist.length > 0 ? court.waitlist[0] : null;
@@ -121,10 +151,68 @@ class WaitlistManager {
 
     return {
       processed,
-      expiredEntry: processed ? court.waitlist[0] || null : null,
+      removedEntries,
       activatedEntry,
       queueLength: court.waitlist.length
     };
+  }
+
+  /**
+   * Automatically check and process expired queue heads across all courts
+   * This should be called periodically (every few minutes) by a background job
+   * @returns {Object} - Processing results
+   */
+  static async autoProcessExpiredQueues() {
+    try {
+      const courts = await Court.find({ 'waitlist.0': { $exists: true } }); // Only courts with waitlists
+      const processedCourts = [];
+      let totalExpiredRemoved = 0;
+
+      for (const court of courts) {
+        const result = await this.processQueueProgression(court);
+        
+        if (result.processed) {
+          processedCourts.push({
+            courtId: court._id,
+            courtName: court.name,
+            removedEntries: result.removedEntries,
+            activatedEntry: result.activatedEntry,
+            newQueueLength: result.queueLength
+          });
+          
+          totalExpiredRemoved += result.removedEntries.length;
+          await court.save();
+        }
+      }
+
+      return {
+        success: true,
+        message: 'Automatic queue processing completed',
+        totalCourtsProcessed: processedCourts.length,
+        totalExpiredRemoved,
+        processedCourts
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Reorder waitlist indices only, without changing start times
+   * @param {Object} court - Court document with waitlist
+   * @returns {void}
+   */
+  static async reorderWaitlistIndicesOnly(court) {
+    // Sort by current index and reassign sequential indices
+    court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
+    
+    court.waitlist.forEach((entry, index) => {
+      entry.waitlistIndex = index + 1;
+    });
   }
 
   /**
@@ -143,7 +231,7 @@ class WaitlistManager {
       await this.processQueueProgression(court);
       await court.save();
 
-      const status = this.getCourtStatus(court);
+      const status = await this.getCourtStatus(court);
 
       if (status.isAvailable) {
         return {
@@ -182,9 +270,9 @@ class WaitlistManager {
    * @param {Object} court - Court document
    * @returns {Date} - Calculated start time in PST
    */
-  static calculateStartTime(court) {
+  static async calculateStartTime(court) {
     const now = this.getPSTTime(); // Use PST time
-    const status = this.getCourtStatus(court);
+    const status = await this.getCourtStatus(court);
     
     if (status.queueLength === 0) {
       // Empty queue - immediate activation (start now)
@@ -285,8 +373,8 @@ class WaitlistManager {
           processed.push({
             courtId: court._id,
             courtName: court.name,
-            expiredUsers: progressionResult.expiredEntry ? progressionResult.expiredEntry.usernames : [],
-            activatedUsers: progressionResult.activatedEntry ? progressionResult.activatedEntry.usernames : [],
+            removedEntries: progressionResult.removedEntries,
+            activatedEntry: progressionResult.activatedEntry,
             remainingQueueLength: progressionResult.queueLength
           });
         }
@@ -366,7 +454,7 @@ class WaitlistManager {
       const updatedCourt = await Court.findById(courtId);
 
       // Calculate smart start time
-      const startTime = this.calculateStartTime(updatedCourt);
+      const startTime = await this.calculateStartTime(updatedCourt);
 
       // Generate next waitlist index
       const nextIndex = this.getNextWaitlistIndex(updatedCourt.waitlist);
