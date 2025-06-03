@@ -13,6 +13,18 @@ class PSTTimeUtils {
   }
 
   /**
+   * Get PST-adjusted timestamp for database storage (NOT RECOMMENDED)
+   * This creates a Date object that represents PST time but stores it as if it were UTC
+   * WARNING: This breaks DST transitions and international compatibility
+   * @returns {Date} - Date object with PST time as UTC
+   */
+  static getPSTTimeForDatabase() {
+    const now = new Date();
+    const pstString = now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
+    return new Date(pstString);
+  }
+
+  /**
    * Get PST local time string for display purposes
    * @param {Date} date - Date to format in PST
    * @returns {string} - PST time string
