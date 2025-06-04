@@ -5,13 +5,14 @@ const CourtSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  isAvailable: {
-    type: Boolean,
-    default: true,
-  },
   isVisible: {
     type: Boolean,
     default: true,
+  },
+  currentReservation: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Reservation',
+    default: null
   },
   waitlist: [{
     waitlistIndex: {

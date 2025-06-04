@@ -87,13 +87,35 @@ NODE_ENV=development
 #### Get Visible Courts
 - **GET** `/courts`
 - **Description**: Fetch all visible courts for regular users
-- **Response**: Array of court objects with current reservations
+- **Response**: Court information json in the format:
+
+```json
+{ success : true,
+  courts : [
+    {
+      _id: court._id,
+      name: court.name,
+      isVisible: court.isVisible,
+      isAvailable: court.currentReservation ? false : true,
+      currentReservation: court.currentReservation ? {
+        startTime: court.currentReservation.startTime,
+        userIds: court.currentReservation.usernames || [],
+        type: court.currentReservation.type,
+        option: 'queue'
+      } : null,
+      waitlist: court.waitlist || [],
+      waitlistCount: (court.waitlist || []).length
+    },
+    ...,
+    ]
+}
+```
 
 #### Get All Courts (Admin)
 - **GET** `/courts/all`
 - **Headers**: `x-admin-password: canamadmin`
 - **Description**: Fetch all courts including hidden ones (admin only)
-- **Response**: Array of all court objects
+- **Response**: Array of all court objects, same as above.
 
 #### Court Waitlist Management
 - **POST** `/waitlist/:courtId/join`

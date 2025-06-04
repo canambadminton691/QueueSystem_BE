@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const Court = require('../models/Court');
 const Reservation = require('../models/Reservation');
-const WaitlistManager = require('../utils/waitlistManager');
+// const WaitlistManager = require('../utils/waitlistManager');
+// const { validateAdmin } = require('../utils/validateAdmin');
 
 // Constants
 const ADMIN_PASSWORD = 'canamadmin';
@@ -23,29 +24,26 @@ const validateAdmin = (req, res, next) => {
 
 // Utility function to process court data using unified queue logic
 async function processCourtData(court) {
-  // Only process queue progression if court has a waitlist
-  if (court.waitlist && court.waitlist.length > 0) {
-    await WaitlistManager.processQueueProgression(court);
-    await court.save();
+
+  if (!court.currentReservation && court.waitlist.length !== 0) {
+    throw new Error('Current reservation is empty but waitlist is not empty.');
   }
-  
-  // Get current status using unified logic
-  const status = WaitlistManager.getCourtStatus(court);
-  
+
   return {
     _id: court._id,
     name: court.name,
     isVisible: court.isVisible,
-    isAvailable: status.isAvailable,
-    currentReservation: status.activeReservation ? {
-      startTime: status.activeReservation.startTime,
-      userIds: status.activeReservation.usernames || [],
-      type: status.activeReservation.usernames?.length === 1 ? 'half' : 'full',
+    isAvailable: court.currentReservation ? false : true,
+    currentReservation: court.currentReservation ? {
+      startTime: court.currentReservation.startTime,
+      userIds: court.currentReservation.usernames || [],
+      type: court.currentReservation.type,
       option: 'queue'
     } : null,
     waitlist: court.waitlist || [],
     waitlistCount: (court.waitlist || []).length
   };
+
 }
 
 // Utility function to ensure all courts exist
@@ -61,8 +59,8 @@ async function ensureAllCourtsExist() {
     if (!existingCourtNames.has(courtName)) {
       courtsToCreate.push({
         name: courtName,
-        isAvailable: true,
         isVisible: true,
+        currentReservation: null,
         waitlist: []
       });
     }

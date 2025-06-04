@@ -9,7 +9,7 @@ const PSTTimeUtils = require('./pstTime');
  */
 
 class WaitlistManager {
-  
+
   /**
    * Get current time in Pacific Standard Time (PST/PDT) as a Date object
    * @returns {Date} - Date object representing current time in PST
@@ -62,8 +62,76 @@ class WaitlistManager {
    * @returns {Object} - Court status information
    */
   static async getCourtStatus(court) {
+
+    if (!court.currentReservation && court.waitlist.length !== 0) {
+      throw new Error('Current reservation is empty but waitlist is not empty.');
+    }
+
+
+    if (!court.currentReservation) {
+      return {
+        isAvailable: true,
+        activeReservation: null,
+        nextEntry: null,
+        queueLength: 0
+      };
+    }
+
+    if (court.waitlist.length === 0) {
+      return {
+        isAvailable: court.currentReservation ? false : true,
+        activeReservation: null,
+        nextEntry: null,
+        queueLength: 0
+      }
+    }
+
+    // Sort waitlist to ensure proper order
+    const sortedQueue = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
+    const head = sortedQueue[0];
+    // const now = this.getPSTTime(); // Use PST time
+
+    // let headEndTime;
+
+    // // Try to get actual endTime from reservation, fallback to calculated time
+    // if (head.reservationId) {
+    //   try {
+    //     const reservation = await Reservation.findById(head.reservationId);
+    //     if (reservation && reservation.endTime) {
+    //       headEndTime = this.toPSTTime(reservation.endTime);
+    //     } else {
+    //       // Fallback: calculate from startTime + 30 minutes
+    //       headEndTime = this.addMinutesToPST(this.toPSTTime(head.startTime), 30);
+    //     }
+    //   } catch (error) {
+    //     // If reservation lookup fails, fallback to calculation
+    //     headEndTime = this.addMinutesToPST(this.toPSTTime(head.startTime), 30);
+    //   }
+    // } else {
+    //   // No reservation linked, calculate from startTime + 30 minutes
+    //   headEndTime = this.addMinutesToPST(this.toPSTTime(head.startTime), 30);
+    // }
+
+
+    return {
+      isAvailable: court.currentReservation ? false : true,
+      activeReservation: court.currentReservation,
+      nextEntry: head,
+      queueLength: court.waitlist.length,
+      headExpired: now >= headEndTime,
+      headEndTime: headEndTime // Include actual end time for debugging
+    };
+  }
+
+
+  /**
+   * Get current court status using unified queue logic
+   * @param {Object} court - Court document
+   * @returns {Object} - Court status information
+   */
+  static async getCourtStatusDeprecated(court) {
     const now = this.getPSTTime(); // Use PST time
-    
+
     if (!court.waitlist || court.waitlist.length === 0) {
       return {
         isAvailable: true,
@@ -76,9 +144,9 @@ class WaitlistManager {
     // Sort waitlist to ensure proper order
     const sortedQueue = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
     const head = sortedQueue[0];
-    
+
     let headEndTime;
-    
+
     // Try to get actual endTime from reservation, fallback to calculated time
     if (head.reservationId) {
       try {
@@ -122,7 +190,7 @@ class WaitlistManager {
     // If head is expired, remove it and recalculate remaining times
     if (status.headExpired && court.waitlist.length > 0) {
       const expiredEntry = court.waitlist[0];
-      
+
       // Store info about expired entry
       removedEntries.push({
         waitlistIndex: expiredEntry.waitlistIndex,
@@ -130,22 +198,22 @@ class WaitlistManager {
         startTime: expiredEntry.startTime,
         expired: true
       });
-      
+
       // Remove expired reservation if it exists
       if (expiredEntry.reservationId) {
         await Reservation.findByIdAndDelete(expiredEntry.reservationId);
       }
-      
+
       // Remove head from queue
       court.waitlist.splice(0, 1);
-      
+
       // Reorder indices AND recalculate start times from current time
       await this.reorderWaitlistIndices(court);
       await this.recalculateStartTimes(court);
-      
+
       processed = true;
       activatedEntry = court.waitlist.length > 0 ? court.waitlist[0] : null;
-      
+
       // Update court availability
       court.isAvailable = court.waitlist.length === 0;
     }
@@ -171,7 +239,7 @@ class WaitlistManager {
 
       for (const court of courts) {
         const result = await this.processQueueProgression(court);
-        
+
         if (result.processed) {
           processedCourts.push({
             courtId: court._id,
@@ -180,7 +248,7 @@ class WaitlistManager {
             activatedEntry: result.activatedEntry,
             newQueueLength: result.queueLength
           });
-          
+
           totalExpiredRemoved += result.removedEntries.length;
           await court.save();
         }
@@ -210,7 +278,7 @@ class WaitlistManager {
   static async reorderWaitlistIndicesOnly(court) {
     // Sort by current index and reassign sequential indices
     court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
-    
+
     court.waitlist.forEach((entry, index) => {
       entry.waitlistIndex = index + 1;
     });
@@ -244,7 +312,7 @@ class WaitlistManager {
       } else {
         const activeReservation = status.activeReservation;
         const endTime = new Date(new Date(activeReservation.startTime).getTime() + 30 * 60000);
-        
+
         return {
           isAvailable: false,
           suggestion: 'Court is in use, join waitlist',
@@ -274,16 +342,16 @@ class WaitlistManager {
   static async calculateStartTime(court) {
     const now = this.getPSTTime(); // Use PST time
     const status = await this.getCourtStatus(court);
-    
+
     if (status.queueLength === 0) {
       // Empty queue - immediate activation (start now)
       return now;
     }
-    
+
     // Get the last entry in the queue
     const sortedQueue = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
     const lastEntry = sortedQueue[sortedQueue.length - 1];
-    
+
     // Try to get actual endTime from the last entry's reservation
     if (lastEntry.reservationId) {
       try {
@@ -297,7 +365,7 @@ class WaitlistManager {
         console.log('Failed to get reservation endTime, using fallback calculation');
       }
     }
-    
+
     // Fallback: Calculate based on last entry start time + 30 minutes (default duration)
     return this.addMinutesToPST(this.toPSTTime(lastEntry.startTime), 30);
   }
@@ -312,10 +380,10 @@ class WaitlistManager {
     try {
       const query = excludeCourtId ? { _id: { $ne: excludeCourtId } } : {};
       const courts = await Court.find(query);
-      
+
       const conflicts = [];
       const sortedUsernames = [...usernames].sort(); // Sort for comparison
-      
+
       for (const court of courts) {
         for (const entry of court.waitlist) {
           // Check for individual user conflicts
@@ -332,11 +400,11 @@ class WaitlistManager {
               });
             }
           }
-          
+
           // Check for exact same group (regardless of order)
           const sortedEntryUsernames = [...entry.usernames].sort();
-          if (sortedUsernames.length === sortedEntryUsernames.length && 
-              sortedUsernames.every((user, index) => user === sortedEntryUsernames[index])) {
+          if (sortedUsernames.length === sortedEntryUsernames.length &&
+            sortedUsernames.every((user, index) => user === sortedEntryUsernames[index])) {
             conflicts.push({
               type: 'same_group',
               group: usernames,
@@ -349,21 +417,21 @@ class WaitlistManager {
           }
         }
       }
-      
+
       // Remove duplicate conflicts (same user might be reported multiple times)
-      const uniqueConflicts = conflicts.filter((conflict, index, self) => 
-        index === self.findIndex(c => 
-          c.type === conflict.type && 
-          c.courtId.toString() === conflict.courtId.toString() && 
+      const uniqueConflicts = conflicts.filter((conflict, index, self) =>
+        index === self.findIndex(c =>
+          c.type === conflict.type &&
+          c.courtId.toString() === conflict.courtId.toString() &&
           c.waitlistIndex === conflict.waitlistIndex
         )
       );
-      
+
       return {
         hasConflicts: uniqueConflicts.length > 0,
         conflicts: uniqueConflicts
       };
-      
+
     } catch (error) {
       return {
         hasConflicts: false,
@@ -380,10 +448,10 @@ class WaitlistManager {
     try {
       const courts = await Court.find({});
       const processed = [];
-      
+
       for (const court of courts) {
         const progressionResult = await this.processQueueProgression(court);
-        
+
         if (progressionResult.processed) {
           processed.push({
             courtId: court._id,
@@ -393,16 +461,16 @@ class WaitlistManager {
             remainingQueueLength: progressionResult.queueLength
           });
         }
-        
+
         await court.save();
       }
-      
+
       return {
         success: true,
         processedCount: processed.length,
         processed
       };
-      
+
     } catch (error) {
       return {
         success: false,
@@ -420,7 +488,7 @@ class WaitlistManager {
   static async addToWaitlist(courtId, usernames) {
     try {
       // Validate users first
-      const validUsers = await User.find({ 
+      const validUsers = await User.find({
         animalName: { $in: usernames },
         expiresAt: { $gt: new Date() }
       });
@@ -434,7 +502,7 @@ class WaitlistManager {
       if (duplicateCheck.hasConflicts) {
         const individualUserConflicts = duplicateCheck.conflicts.filter(c => c.type === 'individual_user');
         const sameGroupConflicts = duplicateCheck.conflicts.filter(c => c.type === 'same_group');
-        
+
         let errorMessage = '';
         if (sameGroupConflicts.length > 0) {
           errorMessage = `Same user group already in waitlist at ${sameGroupConflicts[0].courtName} (position ${sameGroupConflicts[0].waitlistIndex})`;
@@ -449,7 +517,7 @@ class WaitlistManager {
             errorMessage = `Users already in waitlist: ${individualUserConflicts.map(c => `${c.username} at ${c.courtName}`).join(', ')}`;
           }
         }
-        
+
         throw new Error(errorMessage);
       }
 
@@ -461,7 +529,7 @@ class WaitlistManager {
 
       // Check availability using unified logic (this handles progression internally)
       const availability = await this.checkCourtAvailability(courtId);
-      
+
       // In unified system, we allow joining even empty courts (they become head immediately)
       // No need to reject empty courts since joining empty queue = immediate activation
 
@@ -484,7 +552,7 @@ class WaitlistManager {
         endTime: endTime,
         option: 'queue' // Mark as queue-based reservation
       });
-      
+
       await reservation.save();
 
       // Create waitlist entry with reference to the reservation
@@ -497,10 +565,10 @@ class WaitlistManager {
 
       // Add to court's waitlist array
       updatedCourt.waitlist.push(waitlistEntry);
-      
+
       // Mark court as unavailable since we now have an active head
       updatedCourt.isAvailable = false;
-      
+
       await updatedCourt.save();
 
       return {
@@ -546,7 +614,7 @@ class WaitlistManager {
       for (let i = court.waitlist.length - 1; i >= 0; i--) {
         const entry = court.waitlist[i];
         const userIndex = entry.usernames.indexOf(username);
-        
+
         if (userIndex !== -1) {
           userFound = true;
           // Remove the user from this entry
@@ -559,7 +627,7 @@ class WaitlistManager {
             if (entry.reservationId) {
               await Reservation.findByIdAndDelete(entry.reservationId);
             }
-            
+
             removedEntries.push({
               waitlistIndex: entry.waitlistIndex,
               wasEmpty: true,
@@ -615,13 +683,13 @@ class WaitlistManager {
    */
   static async recalculateStartTimes(court) {
     if (court.waitlist.length === 0) return;
-    
+
     // Sort by index first
     court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
-    
+
     // Calculate start time for first entry using PST
     let baseTime = this.getPSTTime(); // Start from PST now for first entry
-    
+
     // Update start times with 40-minute intervals
     court.waitlist.forEach((entry, index) => {
       if (index === 0) {
@@ -629,7 +697,7 @@ class WaitlistManager {
       } else {
         entry.startTime = this.addMinutesToPST(baseTime, index * 40);
       }
-      
+
       // Update linked reservation with both start and end time (30-minute duration)
       if (entry.reservationId) {
         const endTime = this.addMinutesToPST(entry.startTime, 30); // 30 minutes later in PST
@@ -664,12 +732,12 @@ class WaitlistManager {
       }
 
       const removedEntry = court.waitlist[entryIndex];
-      
+
       // Delete the linked reservation
       if (removedEntry.reservationId) {
         await Reservation.findByIdAndDelete(removedEntry.reservationId);
       }
-      
+
       court.waitlist.splice(entryIndex, 1);
 
       // Reorder indices and recalculate start times after removal
@@ -740,7 +808,7 @@ class WaitlistManager {
   static async reorderWaitlistIndices(court) {
     // Sort by current index and reassign sequential indices
     court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
-    
+
     court.waitlist.forEach((entry, index) => {
       entry.waitlistIndex = index + 1;
     });
@@ -755,20 +823,20 @@ class WaitlistManager {
     try {
       const query = courtId ? { _id: courtId } : {};
       const courts = await Court.find(query);
-      
+
       let totalCleaned = 0;
       let courtsAffected = 0;
 
       for (const court of courts) {
         const originalLength = court.waitlist.length;
-        
+
         // Remove empty entries
-        court.waitlist = court.waitlist.filter(entry => 
+        court.waitlist = court.waitlist.filter(entry =>
           entry.usernames && entry.usernames.length > 0
         );
-        
+
         const cleanedCount = originalLength - court.waitlist.length;
-        
+
         if (cleanedCount > 0) {
           // Reorder indices after cleanup
           await this.reorderWaitlistIndices(court);
@@ -949,19 +1017,19 @@ class WaitlistManager {
       // Calculate cutoff time in PST
       const now = this.getPSTTime();
       const cutoffTime = this.addMinutesToPST(now, -(maxWaitTimeHours * 60)); // Subtract hours
-      
+
       let totalRemoved = 0;
       let courtsAffected = 0;
 
       for (const court of courts) {
         const originalLength = court.waitlist.length;
-        
+
         // Remove expired entries (compare in PST)
         court.waitlist = court.waitlist.filter(entry => {
           const entryStartTime = this.toPSTTime(entry.startTime);
           return entryStartTime > cutoffTime;
         });
-        
+
         if (court.waitlist.length !== originalLength) {
           // Reorder indices after removing expired entries
           await this.reorderWaitlistIndices(court);
@@ -1016,11 +1084,11 @@ class WaitlistManager {
       for (let i = court.waitlist.length - 1; i >= 0; i--) {
         const entry = court.waitlist[i];
         const userIndex = entry.usernames.indexOf(username);
-        
+
         if (userIndex !== -1) {
           userFound = true;
           const isHead = (entry.waitlistIndex === 1); // Head of queue
-          
+
           // Remove the user from this entry
           entry.usernames.splice(userIndex, 1);
 
@@ -1028,19 +1096,19 @@ class WaitlistManager {
           if (entry.usernames.length === 0) {
             entireReservationRemoved = true;
             removedFromHead = isHead;
-            
+
             // Delete the linked reservation
             if (entry.reservationId) {
               await Reservation.findByIdAndDelete(entry.reservationId);
             }
-            
+
             removedEntries.push({
               waitlistIndex: entry.waitlistIndex,
               wasEmpty: true,
               reservationDeleted: !!entry.reservationId,
               wasHead: isHead
             });
-            
+
             court.waitlist.splice(i, 1);
           } else {
             // Reservation still has users - just update the reservation, NO TIME CHANGES
@@ -1111,17 +1179,17 @@ class WaitlistManager {
    */
   static async recalculateStartTimesFromHead(court) {
     if (court.waitlist.length === 0) return;
-    
+
     // Sort by index first
     court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
-    
+
     // Start from PST now since head was removed
     const now = this.getPSTTime();
-    
+
     // Update start times with 40-minute intervals starting from PST now
     court.waitlist.forEach((entry, index) => {
       entry.startTime = this.addMinutesToPST(now, index * 40);
-      
+
       // Update linked reservation with both start and end time (30-minute duration)
       if (entry.reservationId) {
         const endTime = this.addMinutesToPST(entry.startTime, 30); // 30 minutes later in PST
@@ -1140,14 +1208,14 @@ class WaitlistManager {
    */
   static async recalculateStartTimesFromPosition(court) {
     if (court.waitlist.length === 0) return;
-    
+
     // Sort by index first
     court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
-    
+
     // For non-head removals, maintain existing head time and recalculate from there
     if (court.waitlist.length > 0) {
       const headStartTime = this.toPSTTime(court.waitlist[0].startTime);
-      
+
       // Update start times with 40-minute intervals from head
       court.waitlist.forEach((entry, index) => {
         if (index === 0) {
@@ -1160,9 +1228,9 @@ class WaitlistManager {
           }
           return;
         }
-        
+
         entry.startTime = this.addMinutesToPST(headStartTime, index * 40);
-        
+
         // Update linked reservation with both start and end time (30-minute duration)
         if (entry.reservationId) {
           const endTime = this.addMinutesToPST(entry.startTime, 30); // 30 minutes later in PST
