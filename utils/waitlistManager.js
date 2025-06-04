@@ -119,7 +119,7 @@ class WaitlistManager {
     let removedEntries = [];
     let activatedEntry = null;
 
-    // If head is expired, remove it and DON'T change other times
+    // If head is expired, remove it and recalculate remaining times
     if (status.headExpired && court.waitlist.length > 0) {
       const expiredEntry = court.waitlist[0];
       
@@ -139,8 +139,9 @@ class WaitlistManager {
       // Remove head from queue
       court.waitlist.splice(0, 1);
       
-      // Reorder remaining entries but DON'T change their start times
-      await this.reorderWaitlistIndicesOnly(court);
+      // Reorder indices AND recalculate start times from current time
+      await this.reorderWaitlistIndices(court);
+      await this.recalculateStartTimes(court);
       
       processed = true;
       activatedEntry = court.waitlist.length > 0 ? court.waitlist[0] : null;

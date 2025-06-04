@@ -40,29 +40,28 @@ async function debugExpiration() {
     console.log('🕐 Head Start Time (ISO):', head.startTime.toISOString());
     console.log('🕐 Head Start Time (PST):', PSTTimeUtils.getPSTTimeString(head.startTime));
     
-    // Check actual reservation
+    // Check and modify actual reservation
     if (head.reservationId) {
       const reservation = await Reservation.findById(head.reservationId);
       if (reservation) {
-        console.log('\n📋 Reservation Details:');
-        console.log('   Start Time (ISO):', reservation.startTime.toISOString());
-        console.log('   Start Time (PST):', PSTTimeUtils.getPSTTimeString(reservation.startTime));
-        console.log('   End Time (ISO):', reservation.endTime.toISOString());
+        console.log('\n📋 BEFORE Modification:');
         console.log('   End Time (PST):', PSTTimeUtils.getPSTTimeString(reservation.endTime));
         
-        // Use actual reservation end time for expiration check
-        const actualEndTime = reservation.endTime;
-        const isExpiredActual = nowPST >= actualEndTime;
-        const timeDiffActual = Math.floor((nowPST - actualEndTime) / (1000 * 60));
+        // Modify endTime to 5 minutes ago to make it expired
+        const fiveMinutesAgo = new Date(nowPST.getTime() - (5 * 60 * 1000));
+        await Reservation.findByIdAndUpdate(head.reservationId, {
+          endTime: fiveMinutesAgo
+        });
+        console.log('\n🔧 MODIFIED End Time to:', PSTTimeUtils.getPSTTimeString(fiveMinutesAgo));
+        console.log('   (Set to 5 minutes ago to make it expired)');
         
-        console.log('\n🔍 Expiration Check (Using Actual End Time):');
-        console.log('   Current Time >= Actual End Time?', isExpiredActual);
-        console.log('   Time difference (minutes):', timeDiffActual);
-        console.log('   Status:', isExpiredActual ? '❌ EXPIRED' : '✅ Still active');
+        // Verify modification
+        const updatedReservation = await Reservation.findById(head.reservationId);
+        const isNowExpired = nowPST >= updatedReservation.endTime;
+        console.log('\n✅ Verification:');
+        console.log('   Updated End Time (PST):', PSTTimeUtils.getPSTTimeString(updatedReservation.endTime));
+        console.log('   Is Now Expired?', isNowExpired ? '❌ YES - EXPIRED' : '✅ No');
         
-        if (isExpiredActual) {
-          console.log('\n🚨 This SHOULD be automatically removed based on actual endTime!');
-        }
       } else {
         console.log('\n❌ Reservation not found in database');
       }
@@ -70,14 +69,11 @@ async function debugExpiration() {
       console.log('\n❌ No reservation ID linked to waitlist entry');
     }
     
-    // Also show calculated end time for comparison
-    const calculatedEndTime = new Date(head.startTime.getTime() + (30 * 60 * 1000));
-    console.log('\n📊 Calculated End Time (Start + 30 min):');
-    console.log('   Calculated End Time (ISO):', calculatedEndTime.toISOString());
-    console.log('   Calculated End Time (PST):', PSTTimeUtils.getPSTTimeString(calculatedEndTime));
-    
-    const isExpiredCalculated = nowPST >= calculatedEndTime;
-    console.log('   Would be expired by calculation?', isExpiredCalculated);
+    // Show current waitlist positions and times before processing
+    console.log('\n📋 Current Waitlist Before Processing:');
+    court.waitlist.forEach((entry, index) => {
+      console.log(`   ${entry.waitlistIndex}. ${entry.usernames.join(', ')} - ${PSTTimeUtils.getPSTTimeString(entry.startTime)}`);
+    });
 
   } catch (error) {
     console.error('❌ Error:', error.message);
