@@ -55,7 +55,7 @@ router.post('/:courtId', async (req, res) => {
         _id: court._id,
         name: court.name,
         isVisible: court.isVisible,
-        isAvailable: court.isAvailable,
+        isAvailable: court.currentReservation ? false : true,
         currentReservation: court.currentReservation ? {
           startTime: court.currentReservation.startTime,
           userIds: court.currentReservation.userIds,

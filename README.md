@@ -193,10 +193,28 @@ NODE_ENV=development
 ### Admin API
 
 #### Admin Actions
-- **POST** `/admin/toggle-court-visibility`
+- **POST** `/admin/toggle-court-visibility/:courtId`
 - **Headers**: `x-admin-password: canamadmin`
-- **Body**: `{ "courtId": "court_object_id" }`
 - **Description**: Toggle court visibility
+- **Returns**:
+
+```json
+{ 
+      success: true,
+      court: {
+        _id: court._id,
+        name: court.name,
+        isVisible: court.isVisible,
+        isAvailable: court.currentReservation ? false : true,
+        currentReservation: court.currentReservation ? {
+          startTime: court.currentReservation.startTime,
+          userIds: court.currentReservation.userIds,
+          type: court.currentReservation.type,
+          option: court.currentReservation.option
+        } : null
+      }
+    }
+```
 
 - **POST** `/admin/end-reservation`
 - **Headers**: `x-admin-password: canamadmin`
