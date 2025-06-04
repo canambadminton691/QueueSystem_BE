@@ -40,7 +40,7 @@ mongoose.connect(process.env.MONGODB_URI)
     console.log('MongoDB connection successful');
     
     // Start the queue scheduler after DB connection
-    queueScheduler.start(2); // Check every 2 minutes
+    queueScheduler.start(1); // Check every 1 minutes
   })
   .catch(err => console.error('MongoDB connection error:', err))
   .finally(() => {

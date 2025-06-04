@@ -12,9 +12,9 @@ class QueueScheduler {
 
   /**
    * Start the automatic queue processing
-   * @param {number} intervalMinutes - How often to check (default: 2 minutes)
+   * @param {number} intervalMinutes - How often to check (default: 1 minutes)
    */
-  start(intervalMinutes = 2) {
+  start(intervalMinutes = 1) {
     if (this.isRunning) {
       console.log('Queue scheduler is already running');
       return;

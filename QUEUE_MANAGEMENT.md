@@ -6,7 +6,7 @@ The CanAm backend now includes an automatic queue management system that checks 
 ## How It Works
 
 ### 1. **Automatic Background Processing** 🤖
-- **Frequency**: Checks every 2 minutes
+- **Frequency**: Checks every 1 minutes
 - **What it does**: Scans all courts for expired head reservations
 - **Action**: Removes expired heads and promotes next player to active
 - **Time preservation**: Does NOT change start times for remaining players
@@ -101,7 +101,7 @@ GET /api/waitlist/scheduler/status
 The system provides detailed console logs:
 
 ```
-🚀 Starting queue scheduler - checking every 2 minutes
+🚀 Starting queue scheduler - checking every 1 minutes
 ⏰ Checking for expired queue heads...
 ✅ Processed 1 expired entries across 1 courts
   📍 Court 1: Removed 1 expired entries
@@ -111,7 +111,7 @@ The system provides detailed console logs:
 
 ## Key Features
 
-✅ **Automatic**: Runs every 2 minutes in background  
+✅ **Automatic**: Runs every 1 minutes in background  
 ✅ **Time Preservation**: Doesn't change existing queue times  
 ✅ **Accurate**: Uses PST local time for all calculations  
 ✅ **Robust**: Handles database cleanup (removes reservations)  
