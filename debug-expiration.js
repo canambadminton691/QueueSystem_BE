@@ -31,36 +31,43 @@ async function debugExpiration() {
     const nowPSTString = PSTTimeUtils.getPSTTimeString(nowPST);
     
     console.log('\n⏰ Current PST Time:', nowPSTString);
-    console.log('⏰ Current PST ISO:', nowPST.toISOString());
 
-    // Check head entry
-    const head = court.waitlist[0];
-    console.log('\n👥 Head Entry:', head.usernames.join(', '));
-    console.log('🔗 Reservation ID:', head.reservationId);
-    console.log('🕐 Head Start Time (ISO):', head.startTime.toISOString());
-    console.log('🕐 Head Start Time (PST):', PSTTimeUtils.getPSTTimeString(head.startTime));
+    // Find Nightingale, Reindeer specifically
+    const sortedQueue = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
+    const nightingaleEntry = sortedQueue.find(entry => 
+      entry.usernames.includes('Nightingale') && entry.usernames.includes('Reindeer')
+    );
     
-    // Check and modify actual reservation
-    if (head.reservationId) {
-      const reservation = await Reservation.findById(head.reservationId);
+    if (!nightingaleEntry) {
+      console.log('❌ Nightingale, Reindeer entry not found');
+      return;
+    }
+    
+    console.log('\n👥 Found Entry (Position ' + nightingaleEntry.waitlistIndex + '):', nightingaleEntry.usernames.join(', '));
+    console.log('🔗 Reservation ID:', nightingaleEntry.reservationId);
+    
+    // Check and modify their reservation
+    if (nightingaleEntry.reservationId) {
+      const reservation = await Reservation.findById(nightingaleEntry.reservationId);
       if (reservation) {
         console.log('\n📋 BEFORE Modification:');
+        console.log('   Start Time (PST):', PSTTimeUtils.getPSTTimeString(reservation.startTime));
         console.log('   End Time (PST):', PSTTimeUtils.getPSTTimeString(reservation.endTime));
         
-        // Modify endTime to 5 minutes ago to make it expired
-        const fiveMinutesAgo = new Date(nowPST.getTime() - (5 * 60 * 1000));
-        await Reservation.findByIdAndUpdate(head.reservationId, {
-          endTime: fiveMinutesAgo
+        // Modify endTime to 15 minutes after start (instead of default 30) 
+        const fifteenMinutesAfterStart = new Date(reservation.startTime.getTime() + (15 * 60 * 1000));
+        await Reservation.findByIdAndUpdate(nightingaleEntry.reservationId, {
+          endTime: fifteenMinutesAfterStart
         });
-        console.log('\n🔧 MODIFIED End Time to:', PSTTimeUtils.getPSTTimeString(fiveMinutesAgo));
-        console.log('   (Set to 5 minutes ago to make it expired)');
+        console.log('\n🔧 MODIFIED End Time to:', PSTTimeUtils.getPSTTimeString(fifteenMinutesAfterStart));
+        console.log('   (Changed from 30 minutes to 15 minutes duration)');
         
         // Verify modification
-        const updatedReservation = await Reservation.findById(head.reservationId);
-        const isNowExpired = nowPST >= updatedReservation.endTime;
+        const updatedReservation = await Reservation.findById(nightingaleEntry.reservationId);
         console.log('\n✅ Verification:');
         console.log('   Updated End Time (PST):', PSTTimeUtils.getPSTTimeString(updatedReservation.endTime));
-        console.log('   Is Now Expired?', isNowExpired ? '❌ YES - EXPIRED' : '✅ No');
+        console.log('   Duration: 15 minutes (instead of default 30)');
+        console.log('   Next entry should start at:', PSTTimeUtils.getPSTTimeString(updatedReservation.endTime));
         
       } else {
         console.log('\n❌ Reservation not found in database');
@@ -69,8 +76,8 @@ async function debugExpiration() {
       console.log('\n❌ No reservation ID linked to waitlist entry');
     }
     
-    // Show current waitlist positions and times before processing
-    console.log('\n📋 Current Waitlist Before Processing:');
+    // Show current waitlist positions and times
+    console.log('\n📋 Current Waitlist:');
     court.waitlist.forEach((entry, index) => {
       console.log(`   ${entry.waitlistIndex}. ${entry.usernames.join(', ')} - ${PSTTimeUtils.getPSTTimeString(entry.startTime)}`);
     });

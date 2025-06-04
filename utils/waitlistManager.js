@@ -280,12 +280,26 @@ class WaitlistManager {
       return now;
     }
     
-    // Calculate based on last entry in queue + 40 minutes
+    // Get the last entry in the queue
     const sortedQueue = court.waitlist.sort((a, b) => a.waitlistIndex - b.waitlistIndex);
     const lastEntry = sortedQueue[sortedQueue.length - 1];
     
-    // Next entry starts 40 minutes after last entry's start time
-    return this.addMinutesToPST(this.toPSTTime(lastEntry.startTime), 40);
+    // Try to get actual endTime from the last entry's reservation
+    if (lastEntry.reservationId) {
+      try {
+        const lastReservation = await Reservation.findById(lastEntry.reservationId);
+        if (lastReservation && lastReservation.endTime) {
+          // Use the actual endTime of the previous reservation
+          return this.toPSTTime(lastReservation.endTime);
+        }
+      } catch (error) {
+        // If reservation lookup fails, fall back to calculation
+        console.log('Failed to get reservation endTime, using fallback calculation');
+      }
+    }
+    
+    // Fallback: Calculate based on last entry start time + 30 minutes (default duration)
+    return this.addMinutesToPST(this.toPSTTime(lastEntry.startTime), 30);
   }
 
   /**
