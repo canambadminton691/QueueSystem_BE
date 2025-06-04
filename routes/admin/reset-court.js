@@ -6,16 +6,27 @@ const Reservation = require('../../models/Reservation');
 
 const ADMIN_PASSWORD = 'canamadmin';
 
-router.post('/', async (req, res) => {
-  try {
-    const { courtId, adminPassword } = req.body;
+// validate the password of admin
+const validateAdmin = (req, res, next) => {
+  const adminPassword = req.headers['x-admin-password'];
+  
+  if (adminPassword !== ADMIN_PASSWORD) {
+    return res.status(401).json({ 
+      success: false,
+      error: 'Invalid admin password' 
+    });
+  }
+  
+  next();
+};
 
-    // Verify admin password
-    if (adminPassword !== ADMIN_PASSWORD) {
-      return res.status(401).json({ 
-        error: 'Invalid admin password' 
-      });
-    }
+// apply middleware to all routes
+router.use(validateAdmin);
+
+router.post('/:courtId', async (req, res) => {
+  try {
+    const { courtId } = req.params;
+    console.info('Court ID to reset ', courtId);
 
     // Find the court and populate the reservation
     const court = await Court.findById(courtId).populate('currentReservation');
@@ -31,8 +42,9 @@ router.post('/', async (req, res) => {
       const reservationId = court.currentReservation._id;
       
       // Reset court status first
-      court.isAvailable = true;
       court.currentReservation = null;
+      court.waitlist = [];
+      court.isVisible = true;
       await court.save();
 
       // Then delete the reservation

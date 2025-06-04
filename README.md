@@ -200,26 +200,34 @@ NODE_ENV=development
 
 ```json
 { 
-      success: true,
-      court: {
-        _id: court._id,
-        name: court.name,
-        isVisible: court.isVisible,
-        isAvailable: court.currentReservation ? false : true,
-        currentReservation: court.currentReservation ? {
-          startTime: court.currentReservation.startTime,
-          userIds: court.currentReservation.userIds,
-          type: court.currentReservation.type,
-          option: court.currentReservation.option
-        } : null
-      }
-    }
+  success: true,
+  court: {
+    _id: court._id,
+    name: court.name,
+    isVisible: court.isVisible,
+    isAvailable: court.currentReservation ? false : true,
+    currentReservation: court.currentReservation ? {
+      startTime: court.currentReservation.startTime,
+      userIds: court.currentReservation.userIds,
+      type: court.currentReservation.type,
+      option: court.currentReservation.option
+    } : null
+  }
+}
 ```
 
-- **POST** `/admin/end-reservation`
+- **POST** `/admin/reset-court/:courtId`
 - **Headers**: `x-admin-password: canamadmin`
-- **Body**: `{ "courtId": "court_object_id" }`
-- **Description**: Manually end a court reservation
+- **Description**: Manually reset a court and remove all waitlist
+- **Returns**:
+
+```json
+{ 
+  success: true,
+  message: 'Court reset successfully'
+}
+```
+
 
 ### Utility APIs
 
