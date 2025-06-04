@@ -22,9 +22,10 @@ const validateAdmin = (req, res, next) => {
 // apply middleware to all routes
 router.use(validateAdmin);
 
-router.post('/', async (req, res) => {
+router.post('/:courtId', async (req, res) => {
   try {
-    const { courtId } = req.body;
+    const { courtId } = req.params;
+    console.info('Court ID to toggle ', courtId);
     
     if (!courtId) {
       return res.status(400).json({
@@ -34,13 +35,14 @@ router.post('/', async (req, res) => {
     }
 
     // search corresponding court
-    const court = await Court.findById(courtId).populate('currentReservation');
+    const court = await Court.findById(courtId);
     if (!court) {
       return res.status(404).json({ 
         success: false,
         error: 'Court not found' 
       });
     }
+    console.info('Court found', Court)
 
     // switch court status
     court.isVisible = !court.isVisible;
