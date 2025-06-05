@@ -1,4 +1,5 @@
-const WaitlistManager = require('./waitlistManager');
+// const WaitlistManager = require('./waitlistManager');
+const updateReservationsCron = require('./updateReservations');
 
 /**
  * Queue Scheduler for automatic expired head removal
@@ -25,7 +26,8 @@ class QueueScheduler {
     this.intervalId = setInterval(async () => {
       try {
         console.log('⏰ Checking for expired queue heads...');
-        const result = await WaitlistManager.autoProcessExpiredQueues();
+        // const result = await WaitlistManager.autoProcessExpiredQueues();
+        const result = await updateReservationsCron();
         
         if (result.success && result.totalExpiredRemoved > 0) {
           console.log(`✅ Processed ${result.totalExpiredRemoved} expired entries across ${result.totalCourtsProcessed} courts`);
