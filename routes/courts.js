@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const Court = require('../models/Court');
 const Reservation = require('../models/Reservation');
+const fetchCourts = require('../utils/fetchCourts');
+
 // const WaitlistManager = require('../utils/waitlistManager');
 // const { validateAdmin } = require('../utils/validateAdmin');
 
@@ -22,34 +24,10 @@ const validateAdmin = (req, res, next) => {
   next();
 };
 
-// Utility function to process court data using unified queue logic
-async function processCourtData(court) {
-
-  if (!court.currentReservation && court.waitlist.length !== 0) {
-    throw new Error('Current reservation is empty but waitlist is not empty.');
-  }
-
-  return {
-    _id: court._id,
-    name: court.name,
-    isVisible: court.isVisible,
-    isAvailable: court.currentReservation ? false : true,
-    currentReservation: court.currentReservation ? {
-      startTime: court.currentReservation.startTime,
-      userIds: court.currentReservation.usernames || [],
-      type: court.currentReservation.type,
-      option: 'queue'
-    } : null,
-    waitlist: court.waitlist || [],
-    waitlistCount: (court.waitlist || []).length
-  };
-
-}
-
 // Utility function to ensure all courts exist
 async function ensureAllCourtsExist() {
   // Ensure all courts exist (1 through 20)
-  const existingCourts = await Court.find().sort({ name: 1 });
+  const existingCourts = await Court.find().sort({ courtNumber: 1 });
   const existingCourtNames = new Set(existingCourts.map(c => c.name));
   
   // Create any missing courts
@@ -59,6 +37,7 @@ async function ensureAllCourtsExist() {
     if (!existingCourtNames.has(courtName)) {
       courtsToCreate.push({
         name: courtName,
+        courtNumber: i,
         isVisible: true,
         currentReservation: null,
         waitlist: []
@@ -77,16 +56,12 @@ router.get('/', async (req, res) => {
     // Ensure all courts exist
     await ensureAllCourtsExist();
     
-    // Fetch only visible courts (no populate needed in unified system)
-    const courts = await Court.find({ isVisible: true })
-      .sort({ name: 1 });
-
-    // Transform the data using unified queue logic
-    const safeCourtData = await Promise.all(courts.map(processCourtData));
+    // Fetch only visible courts
+    const courts = await fetchCourts.fetchCourts({ isVisible: true });
 
     res.json({ 
       success: true,
-      courts: safeCourtData
+      courts: courts
     });
   } catch (error) {
     console.error('Error fetching courts:', error);
@@ -102,16 +77,12 @@ router.get('/all', validateAdmin, async (req, res) => {
     // Ensure all courts exist
     await ensureAllCourtsExist();
     
-    // Fetch all courts (including invisible, no populate needed in unified system)
-    const courts = await Court.find()
-      .sort({ name: 1 });
-
-    // Transform the data using unified queue logic
-    const safeCourtData = await Promise.all(courts.map(processCourtData));
+    // Fetch all courts (including invisible)
+    const courts = await fetchCourts.fetchCourts({ isVisible: undefined });
 
     res.json({ 
       success: true,
-      courts: safeCourtData
+      courts: courts,
     });
   } catch (error) {
     console.error('Error fetching all courts:', error);

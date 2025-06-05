@@ -4,93 +4,116 @@ const Court = require('../models/Court');
 const Reservation = require('../models/Reservation');
 const User = require('../models/User');
 const mongoose = require('mongoose');
+const fetchCourts = require('../utils/fetchCourts');
 
-router.post('/', async (req, res) => {
-  // Start a MongoDB session for transaction
-  const session = await mongoose.startSession();
-  session.startTransaction();
 
-  try {
-    const { courtId, userIds, type, option } = req.body;
-    
-    console.log('Reservation request:', { courtId, userIds, type, option });
+function validateAndFormatRequestBody(body) {
+  const { courtId, userIds, type, option } = body;
 
-    // Basic validation
-    if (!courtId || !userIds || !type) {
-      return res.status(400).json({ 
-        error: 'Missing required fields' 
-      });
-    }
+  if (!courtId || !userIds || !type) {
+    throw new Error('Missing required fields');
+  }
 
-    // Format usernames
-    const formattedUserIds = userIds.map(id => 
-      id.charAt(0).toUpperCase() + id.slice(1).toLowerCase()
-    );
+  const formattedUserIds = userIds.map(id =>
+    id.charAt(0).toUpperCase() + id.slice(1).toLowerCase()
+  );
 
-    // Check for duplicate users
-    if (new Set(formattedUserIds).size !== formattedUserIds.length) {
-      return res.status(400).json({ 
-        error: 'Each player must be unique' 
-      });
-    }
+  if (new Set(formattedUserIds).size !== formattedUserIds.length) {
+    throw new Error('Each player must be unique');
+  }
 
-    // Find the court and lock it for update
-    const court = await Court.findById(courtId).session(session);
-    if (!court) {
-      await session.abortTransaction();
-      return res.status(404).json({ 
-        error: 'Court not found' 
-      });
-    }
+  if (formattedUserIds.length === 4 && type === 'half') {
+    throw new Error('Must select full court with 4 players')
+  }
 
-    // Double-check court availability (race condition protection)
-    if (!court.isAvailable) {
-      await session.abortTransaction();
-      return res.status(400).json({ 
-        error: 'Court is no longer available' 
-      });
-    }
+  return { courtId, formattedUserIds, type, option };
+}
 
-    // Validate users exist and are not expired within the transaction
-    const currentTime = new Date();
-    const pstDate = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
-    const startOfDay = new Date(pstDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    
-    const validUsers = await User.find({
-      animalName: { $in: formattedUserIds },
-      createdAt: { $gte: startOfDay }
-    }).session(session);
 
-    if (validUsers.length !== formattedUserIds.length) {
-      await session.abortTransaction();
-      const foundUsernames = new Set(validUsers.map(u => u.animalName));
-      const invalidUsers = formattedUserIds.filter(id => !foundUsernames.has(id));
-      return res.status(400).json({
-        error: `The following users are not registered or have expired: ${invalidUsers.join(', ')}`
-      });
-    }
+async function validateUsersExist(formattedUserIds, session) {
+  const now = new Date();
+  const pst = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  pst.setHours(0, 0, 0, 0);
 
-    // Check if users are already in active games within the transaction
-    const activeCourts = await Court.find({ 
-      isAvailable: false,
-      'currentReservation.userIds': { $in: formattedUserIds }
-    }).session(session);
+  const users = await User.find({
+    animalName: { $in: formattedUserIds },
+    createdAt: { $gte: pst }
+  }).session(session);
 
-    if (activeCourts.length > 0) {
-      await session.abortTransaction();
-      const busyUsers = formattedUserIds.filter(userId => 
-        activeCourts.some(court => 
-          court.currentReservation?.userIds.includes(userId)
-        )
-      );
-      return res.status(400).json({ 
-        error: `The following users are already in active courts: ${busyUsers.join(', ')}` 
-      });
-    }
+  if (users.length !== formattedUserIds.length) {
+    const found = new Set(users.map(u => u.animalName));
+    const invalid = formattedUserIds.filter(id => !found.has(id));
+    throw new Error(`The following users are not registered or have expired: ${invalid.join(', ')}`);
+  }
+}
 
-    // Create reservation within the transaction
-    const reservation = await Reservation.create([{
+
+const areUsersInActiveGames = async (userIds, session) => {
+  const now = new Date();
+  const activeReservations = await Reservation.find({
+    userIds: { $in: userIds },
+    endTime: { $gt: now }
+  }).session(session);
+
+  return activeReservations.length > 0;
+};
+
+
+const getWaitlistReservationToUpdate = async (waitlist = []) => {
+  if (!Array.isArray(waitlist) || waitlist.length === 0) return null;
+
+  // Sort the waitlist by startTime (earliest first)
+  const sorted = [...waitlist].sort(
+    (a, b) => new Date(a.startTime) - new Date(b.startTime)
+  );
+
+  // Find the first reservation that matches the merge criteria
+  return sorted.find(reservation =>
+    reservation.userIds.length === 2 &&
+    reservation.option === 'merge'
+  ) || null;
+};
+
+
+const createNewReservationInWaitlist = async ({ court, courtId, userIds, type, option, session }) => {
+
+  // Find the next available start time
+  // Sort the waitlist by startTime
+  const sortedWaitlist = [...court.waitlist].sort(
+    (a, b) => new Date(a.startTime) - new Date(b.startTime)
+  );
+
+  // Add currentReservation to the start if it exists
+  const fullQueue = court.currentReservation
+    ? [court.currentReservation, ...sortedWaitlist]
+    : sortedWaitlist;
+
+  const lastReservation = fullQueue[fullQueue.length - 1];
+  if (!lastReservation) {
+    throw new Error(
+      'No preceding or current reservations while trying to add to waitlist.'
+    )
+  }
+  const nextStartTime = lastReservation.endTime;
+  
+  const [reservation] = await Reservation.create([{
+    courtId,
+    userIds,
+    type,
+    option: type === 'half' ? option : null,
+    startTime: nextStartTime
+  }], { session });
+
+  court.waitlist.push(reservation._id);
+
+  return reservation;
+};
+
+
+async function processReservation({ court, courtId, formattedUserIds, type, option, session }) {
+  // Easy case: if no current players on court, create a reservation and grab the court.
+  if (!court.currentReservation) {
+    const [reservation] = await Reservation.create([{
       courtId,
       userIds: formattedUserIds,
       type,
@@ -98,41 +121,85 @@ router.post('/', async (req, res) => {
       startTime: new Date()
     }], { session });
 
-    // Update court within the transaction
-    court.isAvailable = false;
-    court.currentReservation = reservation[0]._id;
-    await court.save({ session });
+    court.currentReservation = reservation._id;
+    return;
+  }
 
-    // Commit the transaction
+  // There are players on court already, then:
+
+  // If the requester is signing up for half court
+  if (type === 'half' && option === 'merge') {
+    // And if the current on-court players are short by 2 ppl & willing to merge
+    if (court.currentReservation.userIds.length === 2
+      && court.currentReservation.option === 'merge') {
+      // Directly add the requester to the current reservation
+      await Reservation.findByIdAndUpdate(
+        court.currentReservation._id,
+        { $push: { userIds: { $each: formattedUserIds } } },
+        { session }
+      );
+      return;
+    }
+
+    // Else, need to check the waitlist
+    const waitlistRes = await getWaitlistReservationToUpdate(court.waitlist);
+
+    if (waitlistRes) {  
+      // Has a waitlist reservation to merge
+      await Reservation.findByIdAndUpdate(
+        waitlistRes._id,
+        { $push: { userIds: { $each: formattedUserIds } } },
+        { session }
+      );
+    } else {  
+      // No waitlist reservation to merge, or waitlist is empty, then add a new reservation.
+      await createNewReservationInWaitlist({ court, courtId, userIds: formattedUserIds, type, option, session });
+    }
+
+    return;
+  }
+
+  // Requester is signing up for full court, always add to the waitlist
+  await createNewReservationInWaitlist({ court, courtId, userIds: formattedUserIds, type, option, session });
+}
+
+
+router.post('/', async (req, res) => {
+  if (!req.body) return res.status(400).json({ error: 'Missing request body' });
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { courtId, formattedUserIds, type, option } = validateAndFormatRequestBody(req.body);
+
+    const court = await Court.findById(courtId)
+      .populate('currentReservation')
+      .populate('waitlist')
+      .session(session);
+
+    if (!court) throw new Error('Court not found');
+
+    await validateUsersExist(formattedUserIds, session);
+
+    if (await areUsersInActiveGames(formattedUserIds, session)) {
+      throw new Error('Some users are already in active games.');
+    }
+
+    await processReservation({ court, courtId, formattedUserIds, type, option, session });
+
+    await court.save({ session });
     await session.commitTransaction();
 
-    // Get the updated court with populated reservation
-    const updatedCourt = await Court.findById(courtId).populate('currentReservation');
+    const updatedCourt = await fetchCourts.fetchCourtById(courtId);
 
-    return res.json({ 
-      success: true,
-      court: {
-        _id: updatedCourt._id,
-        name: updatedCourt.name,
-        isAvailable: updatedCourt.isAvailable,
-        currentReservation: updatedCourt.currentReservation ? {
-          startTime: updatedCourt.currentReservation.startTime,
-          userIds: updatedCourt.currentReservation.userIds,
-          type: updatedCourt.currentReservation.type,
-          option: updatedCourt.currentReservation.option
-        } : null
-      }
-    });
+    res.json({ success: true, court: updatedCourt });
 
   } catch (error) {
-    // Rollback the transaction on error
     await session.abortTransaction();
     console.error('Reservation error:', error);
-    return res.status(500).json({ 
-      error: 'Failed to create reservation' 
-    });
+    res.status(400).json({ error: error.message || 'Failed to create reservation' });
   } finally {
-    // End the session
     session.endSession();
   }
 });

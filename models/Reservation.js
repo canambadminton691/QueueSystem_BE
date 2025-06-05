@@ -11,7 +11,7 @@ const ReservationSchema = new mongoose.Schema({
     required: true,
   }],
   type: {
-    type: String,
+    type: String,  // reservation type
     required: true,
     enum: ['full', 'half']  // Make sure these exact values are allowed
   },
@@ -21,7 +21,7 @@ const ReservationSchema = new mongoose.Schema({
     default: null
   },
   startTime: {
-    type: Date,
+    type: Date,  // start time of the reservation in milliseconds
     default: Date.now,
   },
   endTime: {
