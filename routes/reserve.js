@@ -191,7 +191,7 @@ router.post('/', async (req, res) => {
     await court.save({ session });
     await session.commitTransaction();
 
-    const updatedCourt = await fetchCourts.fetchCourtById(courtId);
+    const updatedCourt = await fetchCourts.fetchCourtViewById(courtId);
 
     res.json({ success: true, court: updatedCourt });
 

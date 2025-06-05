@@ -1,5 +1,5 @@
 const Court = require('../models/Court');
-const { fetchCourts } = require('./fetchCourts');
+const { fetchCourtsView } = require('./fetchCourts');
 
 async function updateReservationsCron() {
   try {
@@ -53,7 +53,7 @@ async function updateReservationsCron() {
       }
     }
 
-    const updatedCourts = await fetchCourts({ isVisible: undefined });
+    const updatedCourts = await fetchCourtsView({ isVisible: undefined });
 
     const result = {
       success: true,

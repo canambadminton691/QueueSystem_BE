@@ -57,7 +57,7 @@ router.get('/', async (req, res) => {
     await ensureAllCourtsExist();
     
     // Fetch only visible courts
-    const courts = await fetchCourts.fetchCourts({ isVisible: true });
+    const courts = await fetchCourts.fetchCourtsView({ isVisible: true });
 
     res.json({ 
       success: true,
@@ -78,7 +78,7 @@ router.get('/all', validateAdmin, async (req, res) => {
     await ensureAllCourtsExist();
     
     // Fetch all courts (including invisible)
-    const courts = await fetchCourts.fetchCourts({ isVisible: undefined });
+    const courts = await fetchCourts.fetchCourtsView({ isVisible: undefined });
 
     res.json({ 
       success: true,
