@@ -118,32 +118,10 @@ NODE_ENV=development
 - **Response**: Array of all court objects, same as above.
 
 #### Court Waitlist Management
-- **POST** `/waitlist/:courtId/join`
-- **Body**: `{ "usernames": ["user1", "user2"] }`
-- **Description**: Join a court's waitlist
 
 - **POST** `/waitlist/:courtId/drop`
 - **Body**: `{ "username": "user1" }`
 - **Description**: Drop a user from court's waitlist (user-initiated)
-
-- **GET** `/waitlist/:courtId`
-- **Description**: Get current waitlist for a specific court
-
-- **DELETE** `/waitlist/:courtId/:waitlistIndex`
-- **Description**: Remove an entry from court waitlist (admin function)
-
-- **GET** `/waitlist`
-- **Description**: Get all waitlists across all courts
-
-- **POST** `/waitlist/:courtId/next`
-- **Description**: Get next players in line for a court
-
-- **POST** `/waitlist/cleanup/empty`
-- **Body**: `{ "courtId": "optional_court_id" }`
-- **Description**: Manually trigger cleanup of empty waitlist entries
-
-- **GET** `/waitlist/debug/user/:username`
-- **Description**: Find which waitlists a user is currently in (debugging)
 
 ### User Registration API
 
@@ -167,28 +145,17 @@ NODE_ENV=development
 {
   "courtId": "court_object_id",
   "userIds": ["Tiger", "Lion"],
-  "type": "doubles",
-  "option": "challenge"
+  "type": "half",
+  "option": "merge"
 }
 ```
 - **Description**: Make a court reservation
+- **Returns**:
 
-### Queue API
+```json
+{ success: true, court: updatedCourt }
+```
 
-#### Get Active Queue
-- **GET** `/queue`
-- **Description**: Get all active court reservations with time remaining
-- **Response**: Array of active reservations sorted by time remaining
-
-#### Join Queue
-- **POST** `/queue/join`
-- **Body**: `{ "userIds": ["Tiger"], "type": "singles" }`
-- **Description**: Join the global queue
-
-#### Leave Queue
-- **DELETE** `/queue/leave`
-- **Body**: `{ "userIds": ["Tiger"] }`
-- **Description**: Leave the global queue
 
 ### Admin API
 
@@ -228,13 +195,21 @@ NODE_ENV=development
 }
 ```
 
+- **POST** `/admin/users`
+- **Headers**: `x-admin-password: canamadmin`
+- **Description**: Get active and idle users registered today
+- **Returns**:
 
-### Utility APIs
+```json
+{
+  success: true,
+  activeUsers: Object.fromEntries(activeUserMap),
+  idleUsers: Object.fromEntries(idleUserMap),
+}
+```
 
-#### Merge Players
-- **POST** `/merge`
-- **Body**: `{ "userIds": ["Tiger", "Lion"], "targetCourtId": "court_id" }`
-- **Description**: Merge players from queue to a specific court
+
+### Utility APIs (unmaintained now)
 
 #### Active Users
 - **GET** `/active-users`
