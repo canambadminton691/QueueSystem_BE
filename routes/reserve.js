@@ -35,15 +35,36 @@ async function validateUsersExist(formattedUserIds, session) {
   const pst = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
   pst.setHours(0, 0, 0, 0);
 
+  // Fetch all users who exist and were created today (regardless of approval)
   const users = await User.find({
     animalName: { $in: formattedUserIds },
     createdAt: { $gte: pst }
   }).session(session);
 
-  if (users.length !== formattedUserIds.length) {
-    const found = new Set(users.map(u => u.animalName));
-    const invalid = formattedUserIds.filter(id => !found.has(id));
-    throw new Error(`The following users are not registered or have expired: ${invalid.join(', ')}`);
+  // Create maps for easier lookup
+  const userMap = new Map(users.map(user => [user.animalName, user]));
+
+  const notFoundOrExpired = [];
+  const notApproved = [];
+
+  for (const id of formattedUserIds) {
+    const user = userMap.get(id);
+    if (!user) {
+      notFoundOrExpired.push(id);
+    } else if (!user.isApproved) {
+      notApproved.push(id);
+    }
+  }
+
+  if (notFoundOrExpired.length || notApproved.length) {
+    let errorMessage = '';
+    if (notFoundOrExpired.length > 0) {
+      errorMessage += `These users are not registered or have expired: ${notFoundOrExpired.join(', ')}. `;
+    }
+    if (notApproved.length > 0) {
+      errorMessage += `These users have not yet been approved: ${notApproved.join(', ')}.`;
+    }
+    throw new Error(errorMessage.trim());
   }
 }
 

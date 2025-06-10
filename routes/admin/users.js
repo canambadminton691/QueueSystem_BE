@@ -79,4 +79,87 @@ router.get('/', validateAdmin, async (req, res) => {
   }
 });
 
+router.post('/approve', validateAdmin, async (req, res) => {
+  try {
+    const { animalName } = req.body;
+
+    if (!animalName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing animal name'
+      });
+    }
+
+    const updatedUser = await User.findOneAndUpdate(
+      { animalName },
+      { isApproved: true },
+      { new: true }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        error: `User with animalName '${animalName}' not found`
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `User '${animalName}' has been approved.`,
+      user: {
+        animalName: updatedUser.animalName,
+        isApproved: updatedUser.isApproved
+      }
+    });
+
+  } catch (error) {
+    console.error('Error approving user:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+router.post('/unapprove', validateAdmin, async (req, res) => {
+  try {
+    const { animalName } = req.body;
+
+    if (!animalName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing animal name'
+      });
+    }
+
+    const updatedUser = await User.findOneAndUpdate(
+      { animalName },
+      { isApproved: false },
+      { new: true }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        error: `User with animalName '${animalName}' not found`
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `User '${animalName}' has been unapproved.`,
+      user: {
+        animalName: updatedUser.animalName,
+        isApproved: updatedUser.isApproved
+      }
+    });
+
+  } catch (error) {
+    console.error('Error unapproving user:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 module.exports = router;

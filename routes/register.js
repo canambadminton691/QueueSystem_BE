@@ -70,6 +70,7 @@ router.post('/', async (req, res) => {
         phoneNumber: cleanedPhone,
         animalName
         // createdAt and expiresAt will be set automatically by the schema defaults
+        // isApproved is by default set to false, pending admin approval
       });
 
       console.log('Created new user:', user);
@@ -79,6 +80,7 @@ router.post('/', async (req, res) => {
         user: {
           phoneNumber: user.phoneNumber,
           animalName: user.animalName,
+          isApproved: user.isApproved,
           createdAt: user.getPSTCreatedAt(), // Return PST formatted time
           createdAtISO: user.createdAt // Keep ISO for compatibility if needed
         },
