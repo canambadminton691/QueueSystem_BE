@@ -39,6 +39,10 @@ router.post('/:courtId/drop', async (req, res) => {
     updatedReservation.userIds = updatedReservation.userIds.filter(
       id => id !== animalName1 && id !== animalName2
     );
+    // We always make the updated Reservation a half court willing to merge.
+    // If the reservation is 4 -> 2, this makes sense; if it's 2 -> 0, it will be deleted anyway.
+    updatedReservation.type = 'half';
+    updatedReservation.option = 'merge';
 
     if (updatedReservation.userIds.length === 0) {
       await Reservation.findByIdAndDelete(updatedReservation._id);
