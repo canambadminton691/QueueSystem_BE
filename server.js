@@ -11,13 +11,8 @@ const queueScheduler = require('./utils/queueScheduler');
 const courtsRoutes = require('./routes/courts');
 const registerRoutes = require('./routes/register');
 const reserveRoutes = require('./routes/reserve');
-const queueRoutes = require('./routes/queue');
 const waitlistRoutes = require('./routes/waitlist');
-const mergeRoutes = require('./routes/merge');
-const validateUsersRoutes = require('./routes/validate-users');
-const activeUsersRoutes = require('./routes/active-users');
 const adminRoutes = require('./routes/admin');
-const cleanupCourtsRoutes = require('./routes/cron/cleanup-courts');
 
 // Create Express app
 const app = express();
@@ -65,13 +60,8 @@ app.get('/', (req, res) => {
 app.use('/api/courts', courtsRoutes);
 app.use('/api/register', registerRoutes);
 app.use('/api/reserve', reserveRoutes);
-app.use('/api/queue', queueRoutes);
 app.use('/api/waitlist', waitlistRoutes);
-app.use('/api/merge', mergeRoutes);
-app.use('/api/validate-users', validateUsersRoutes);
-app.use('/api/active-users', activeUsersRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/cron/cleanup-courts', cleanupCourtsRoutes);
 
 // Add route for 404 errors - this should be AFTER all other routes
 app.use((req, res) => {

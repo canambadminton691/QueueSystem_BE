@@ -6,6 +6,8 @@ const Court = require('../../models/Court');
 // const WaitlistManager = require('../../utils/waitlistManager');
 const fetchCourts = require('../../utils/fetchCourts');
 const { all } = require('../reserve');
+const mongoose = require('mongoose');
+
 
 // Admin password validation middleware
 const validateAdmin = (req, res, next) => {
@@ -51,7 +53,6 @@ router.get('/', validateAdmin, async (req, res) => {
     // Get all courts with waitlists
     const courts = await fetchCourts.fetchCourts({ isVisible: undefined });
 
-    console.log(courts);
     // Get all users registered today
     const allUsers = await User.find({
       createdAt: { $gte: startOfDay }
@@ -59,7 +60,6 @@ router.get('/', validateAdmin, async (req, res) => {
 
     // Create a map of active users with their court information using unified queue logic
     const { activeUsernames, activeUserMap } = await collectAllUsersFromCourts(courts);
-    console.info('Active users', activeUsernames);
 
     // Filter out active users to get idle users
     const idleUsers = allUsers.filter(user => !activeUsernames?.has(user.animalName));
@@ -79,87 +79,73 @@ router.get('/', validateAdmin, async (req, res) => {
   }
 });
 
+
+function normalizeAnimalName(name) {
+  if (!name || typeof name !== 'string') return '';
+  const trimmed = name.trim();
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+}
+
+
 router.post('/approve', validateAdmin, async (req, res) => {
+  const { animalName } = req.body;
+
+  if (!animalName) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing animal name'
+    });
+  }
+
+  // Start a session if you want transactional safety
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const { animalName } = req.body;
-
-    if (!animalName) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing animal name'
-      });
-    }
-
-    const updatedUser = await User.findOneAndUpdate(
-      { animalName },
-      { isApproved: true },
-      { new: true }
-    );
-
-    if (!updatedUser) {
+    const normalizedName = normalizeAnimalName(animalName);
+    const user = await User.findOne({ animalName: normalizedName }).session(session);
+    
+    if (!user) {
+      await session.abortTransaction();
       return res.status(404).json({
         success: false,
-        error: `User with animalName '${animalName}' not found`
+        error: `User with animalName '${normalizedName}' not found`
       });
     }
+
+    // Flip the approval status
+    const newApprovalStatus = !user.isApproved;
+
+    user.isApproved = newApprovalStatus;
+    await user.save({ session });
+
+    await session.commitTransaction();
+
+    console.log('Updated user approval status:', {
+      animalName: user.animalName,
+      isApproved: user.isApproved
+    });
 
     res.json({
       success: true,
-      message: `User '${animalName}' has been approved.`,
+      message: `User '${normalizedName}' is now ${newApprovalStatus ? 'approved' : 'unapproved'}.`,
       user: {
-        animalName: updatedUser.animalName,
-        isApproved: updatedUser.isApproved
+        animalName: user.animalName,
+        isApproved: user.isApproved
       }
     });
 
   } catch (error) {
-    console.error('Error approving user:', error);
-    return res.status(500).json({
+    await session.abortTransaction();
+    console.error('Error toggling approval status:', error);
+    res.status(500).json({
       success: false,
       error: error.message
     });
+  } finally {
+    session.endSession();
   }
+
 });
 
-router.post('/unapprove', validateAdmin, async (req, res) => {
-  try {
-    const { animalName } = req.body;
-
-    if (!animalName) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing animal name'
-      });
-    }
-
-    const updatedUser = await User.findOneAndUpdate(
-      { animalName },
-      { isApproved: false },
-      { new: true }
-    );
-
-    if (!updatedUser) {
-      return res.status(404).json({
-        success: false,
-        error: `User with animalName '${animalName}' not found`
-      });
-    }
-
-    res.json({
-      success: true,
-      message: `User '${animalName}' has been unapproved.`,
-      user: {
-        animalName: updatedUser.animalName,
-        isApproved: updatedUser.isApproved
-      }
-    });
-
-  } catch (error) {
-    console.error('Error unapproving user:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
 module.exports = router;

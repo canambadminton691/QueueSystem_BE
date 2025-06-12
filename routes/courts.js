@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const Court = require('../models/Court');
-const Reservation = require('../models/Reservation');
 const fetchCourts = require('../utils/fetchCourts');
 
 // const WaitlistManager = require('../utils/waitlistManager');

@@ -54,4 +54,12 @@ userSchema.methods.getPSTExpiresAt = function() {
 userSchema.index({ phoneNumber: 1, createdAt: 1 });
 userSchema.index({ animalName: 1 });
 
+userSchema.pre('save', function (next) {
+  if (this.animalName) {
+    const name = this.animalName.trim();
+    this.animalName = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+  }
+  next();
+});
+
 module.exports = mongoose.model('User', userSchema);

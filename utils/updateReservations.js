@@ -62,7 +62,7 @@ async function updateReservationsCron() {
       promotedReservations,
       courts: updatedCourts
     };
-    console.log(result);
+    // console.log(result);
     return result;
 
   } catch (err) {
