@@ -6,6 +6,8 @@ require('dotenv').config();
 
 // Import queue scheduler
 const queueScheduler = require('./utils/queueScheduler');
+// Import cleanup scheduler
+const cleanupScheduler = require('./cron/cleanupScheduler');
 
 // Import routes
 const courtsRoutes = require('./routes/courts');
@@ -36,6 +38,9 @@ mongoose.connect(process.env.MONGODB_URI)
     
     // Start the queue scheduler after DB connection
     queueScheduler.start(1); // Check every 1 minutes
+
+    // Start your cleanup scheduler (every 24 hours)
+    cleanupScheduler.start(24);
   })
   .catch(err => console.error('MongoDB connection error:', err))
   .finally(() => {
@@ -78,11 +83,13 @@ app.use((err, req, res, next) => {
 process.on('SIGINT', () => {
   console.log('\n🛑 Shutting down server...');
   queueScheduler.stop();
+  cleanupScheduler.stop();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   console.log('\n🛑 Shutting down server...');
   queueScheduler.stop();
+  cleanupScheduler.stop();
   process.exit(0);
 });
