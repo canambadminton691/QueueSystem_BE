@@ -1,0 +1,9 @@
+# render.yaml
+cron_jobs:
+  - name: cleanup-old-users
+    env: node
+    schedule: "0 11 * * *"      # every day at 11:00 UTC = 03:00 PST / 04:00 PDT
+    command: "node cron/cleanupOldUsers.js"
+    envVars:
+      - key: MONGODB_URI
+        fromService: QueueSystem_BE # pulls the same var from the render web service
