@@ -97,13 +97,23 @@ router.post('/approve', validateAdmin, async (req, res) => {
     });
   }
 
+  // Get current date in PST
+  const now = new Date();
+  const pstDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  const startOfDay = new Date(pstDate);
+  startOfDay.setHours(0, 0, 0, 0);
+
   // Start a session if you want transactional safety
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const normalizedName = normalizeAnimalName(animalName);
-    const user = await User.findOne({ animalName: normalizedName }).session(session);
+    // The user needs to be registered today to avoid collision.
+    const user = await User.findOne({ 
+      animalName: normalizedName,
+      createdAt: { $gte: startOfDay }
+    }).session(session);
     
     if (!user) {
       await session.abortTransaction();
